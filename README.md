@@ -1,4 +1,4 @@
-# dirb.py
+# deepbuster.py
 
 **An improved dir buster implementation in Python.**
 
@@ -9,8 +9,8 @@ Thanks to massive parallelization using asynchronous I/O, this implementation wo
 ## Prepare
 
 ```bash
-git clone https://github.com/607011/dirb.git
-cd dirb
+git clone https://github.com/Salem-Al-Zuhairi/deepbuster.git
+cd deepbuster
 pipenv install
 ```
 
@@ -19,7 +19,7 @@ pipenv install
 For example:
 
 ```
-pipenv run ./dirb.py "http://example.com" \
+pipenv run ./deepbuster.py "http://example.com" \
   -w path-list1.txt -w path-list2.txt \
   -n 10
   -f \
@@ -33,14 +33,4 @@ Where `http://example.com` is the root of the URL to scan for existent paths, an
 With option `-f` the HTTP client follows redirects.
 `-o` directs output to a file.
 
-See `dirb.py -h` for more options.
-
-
-## License
-
-See [LICENSE](LICENSE)
-
-
-## Copyright
-
-Copyright ©️ 2023 [Oliver Lau](mailto:ola@ct.de), Heise Medien GmbH & Co. KG
+See `deepbuster.py -h` for more options.

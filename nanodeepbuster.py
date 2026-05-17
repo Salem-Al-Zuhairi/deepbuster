@@ -4,7 +4,7 @@ import asyncio
 from typing import Iterable, Any
 from tornado.httpclient import AsyncHTTPClient, HTTPClientError
 
-class NanoDirb:
+class NanoDeepbuster:
     def __init__(self, **kwargs) -> None:
         self.queue = asyncio.Queue()
         self.num_workers = kwargs.get('num_workers', 10)
@@ -49,14 +49,14 @@ async def main(**kwargs) -> None:
 
     kwargs['result_callback'] = result_hook
 
-    dirb = NanoDirb(**kwargs)
+    deepbuster = NanoDeepbuster(**kwargs)
     urls = [
         'https://raetselonkel.de/admin',
         'https://raetselonkel.de/admin.php',
         'https://raetselonkel.de/auth',
         'https://raetselonkel.de/auth.php',
     ]
-    await dirb.run(urls)
+    await deepbuster.run(urls)
 
 if __name__ == '__main__':
     asyncio.run(main(num_workers=10))

@@ -7,7 +7,7 @@ from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
 from typing import Iterable
 
-class Dirb:
+class Deepbuster:
     def __init__(self, base_url: str, **kwargs) -> None:
         self.base_url = base_url
         self.found_callback = kwargs.get('found_callback', None)
@@ -115,9 +115,9 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
     kwargs['error_callback'] = error_hook \
         if not quiet and verbose > 0 else None
 
-    dirb = Dirb(base_url, **kwargs)
+    deepbuster = Deepbuster(base_url, **kwargs)
     for word_file in word_files:
-        await dirb.run(word_file.readlines())
+        await deepbuster.run(word_file.readlines())
 
     if kwargs.get('output_file'):
         output = open(kwargs.get('output_file'), 'w+')
@@ -128,13 +128,13 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
         ESC_QUOTES = str.maketrans({'"': r'\"'})
         FIELDS = ['status_code', 'path', 'effective_url', 'headers']
         output.write(f'''{';'.join(FIELDS)}\n''')
-        for result in dirb.results:
+        for result in deepbuster.results:
             output.write(f'''{result['status_code']};"{result['path'].translate(ESC_QUOTES)}";"{result['effective_url'].translate(ESC_QUOTES)}";''')
             headers = [f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers']]
             output.write(','.join(headers))
             output.write('\n')
     else:
-        alive = dirb.alive()
+        alive = deepbuster.alive()
         if len(alive) == 0:
             print('\n\u001b[31;1mNOTHING FOUND 🧐\u001b[0m')
         else:
@@ -146,7 +146,7 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
 if __name__ == '__main__':
     DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
     DEFAULT_NUM_WORKERS = 20
-    parser = argparse.ArgumentParser(prog='dirb', description='Directory Buster')
+    parser = argparse.ArgumentParser(prog='deepbuster', description='Directory Buster')
     parser.add_argument('base_url', help='Base URL, e.g. https://example.com')
     parser.add_argument('-n', '--num-workers', help='parallelize scanning with n workers running concurrently', type=int, default=DEFAULT_NUM_WORKERS)
     parser.add_argument('-v', '--verbose', action='count', default=0)
