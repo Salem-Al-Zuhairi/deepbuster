@@ -34,3 +34,6 @@ With option `-f` the HTTP client follows redirects.
 `-o` directs output to a file.
 
 See `deepbuster.py -h` for more options.
+
+
+worker -> try_url

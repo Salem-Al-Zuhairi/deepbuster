@@ -34,7 +34,7 @@ class Deepbuster:
             for ext in self.probe_extensions:
                 await self.queue.put(f'{url}{ext}')
         # spawn workers
-        workers = [asyncio.create_task(self.worker()) 
+        workers = [asyncio.create_task(self.worker()) # workers is the number of concurrent threads
                    for _ in range(self.num_workers)]
         # wait for queue to be processed
         await self.queue.join()
@@ -64,6 +64,8 @@ class Deepbuster:
             if response.code == 200:
                 for ext in self.probe_variations:
                     await self.queue.put(f'{path}{ext}')
+            # يتم تنفيذ هذا الشرط  في كل الاحوال طالما انه تم الوصول الى الخادم مثل http 200 301 302
+            # وفي حال لم يتم الرد يتم تنفيذ الشرط الموجود في exception مثل error 404 500
             if callable(self.found_callback):
                 await self.found_callback(path)
         except HTTPClientError as e:
