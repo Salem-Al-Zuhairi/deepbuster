@@ -4,6 +4,7 @@ import argparse
 import sys
 import io
 import uuid
+import ssl
 from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
 from typing import Iterable
@@ -20,9 +21,20 @@ class Deepbuster:
         self.dont_stop_on_warning = kwargs.get('dont_stop_on_warning', False)
         self.ignore_case = kwargs.get('ignore_case', False)
         self.delay = kwargs.get('delay', 0)
+        self.ignored_codes = set(kwargs.get('ignored_codes', []))
+        self.use_path_as_is = kwargs.get('use_path_as_is', False)
         self.fine_tune_404 = kwargs.get('fine_tune_404', False)
         self.custom_404_lengths = set()
         self.custom_404_base_sizes = set()
+        self.ssl_ctx = None
+        cert_arg = kwargs.get('cert', None)
+        if cert_arg:
+            self.ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            if ',' in cert_arg:
+                cert_file, key_file = cert_arg.split(',', 1)
+                self.ssl_ctx.load_cert_chain(certfile=cert_file.strip(), keyfile=key_file.strip())
+            else:
+                self.ssl_ctx.load_cert_chain(certfile=cert_arg.strip())
         self.recursive = kwargs.get('recursive', True)
         self.interactive_recursive = kwargs.get('interactive_recursive', False)
         self.scanned_directories = set(['/'])
@@ -65,7 +77,8 @@ class Deepbuster:
                                headers=headers,
                                auth_username=self.auth_user_name,
                                auth_password=self.auth_password,
-                               follow_redirects=self.follow_redirects)
+                               follow_redirects=self.follow_redirects,
+                               ssl_options=self.ssl_ctx)
             r1 = await http_client.fetch(req1)
             
             if r1.code == 200:
@@ -81,7 +94,8 @@ class Deepbuster:
                                    headers=headers,
                                    auth_username=self.auth_user_name,
                                    auth_password=self.auth_password,
-                                   follow_redirects=self.follow_redirects)
+                                   follow_redirects=self.follow_redirects,
+                                   ssl_options=self.ssl_ctx)
                 r2 = await http_client.fetch(req2)
                 if r2.code == 200:
                     if self.fine_tune_404:
@@ -125,13 +139,14 @@ class Deepbuster:
         if self.delay > 0:
             await asyncio.sleep(self.delay / 1000.0)
         path = await self.queue.get()
-        if not path.startswith('/'):
-            path = '/' + path
-        if not self.dont_force_slash and not path.endswith('/'):
-            # Only append slash if there's no extension in the last path segment
-            last_segment = path.split('/')[-1]
-            if '.' not in last_segment:
-                path = path + '/'
+        if not self.use_path_as_is:
+            if not path.startswith('/'):
+                path = '/' + path
+            if not self.dont_force_slash and not path.endswith('/'):
+                # Only append slash if there's no extension in the last path segment
+                last_segment = path.split('/')[-1]
+                if '.' not in last_segment:
+                    path = path + '/'
         url = f'{self.base_url}{path}'
         if callable(self.pre_fetch_callback):
             await self.pre_fetch_callback(path)
@@ -146,8 +161,11 @@ class Deepbuster:
                               headers=headers,
                               auth_username=self.auth_user_name,
                               auth_password=self.auth_password,
-                              follow_redirects=self.follow_redirects)
+                              follow_redirects=self.follow_redirects,
+                              ssl_options=self.ssl_ctx)
             response = await http_client.fetch(req)
+            if response.code in self.ignored_codes:
+                return
             # print([i for i in response.headers.get_all()])
             print(len(response.body))
 
@@ -191,13 +209,14 @@ class Deepbuster:
             # يتم تنفيذ هذا الشرط  في كل الاحوال طالما انه تم الوصول الى الخادم مثل http 200 301 302
             # وفي حال لم يتم الرد يتم تنفيذ الشرط الموجود في exception مثل error 404 500
             if callable(self.found_callback):
-                await self.found_callback(path)
+                await self.found_callback(path, response.code, len(response.body))
         except HTTPClientError as e:
+            if e.code in self.ignored_codes:
+                return
             # print(f'{e.response} for {path}')
-            if e.response:
-                print(len(e.response.body))
+            body_len = len(e.response.body) if e.response else 0
             if callable(self.error_callback):
-                await self.error_callback(f'{path} -> HTTP status code = {e.code}')
+                await self.error_callback(path, e.code, body_len)
             self.results.append({
                 'path': path,
                 'effective_url': '',
@@ -251,25 +270,60 @@ class Deepbuster:
 
 async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], **kwargs) -> None:
 
+    # Beautiful Ascii art banner in Feroxbuster style
+    print("\u001b[35;1m" + r"""
+ ____  _____ _____ ____  ____  _     ____ _____ _____ ____ 
+|  _ \|  ___| ____|  _ \| __ )| |   / ___|_   _| ____|  _ \ 
+| | | | |_  |  _| | |_) |  _ \| |   \___ \ | | |  _| | |_) |
+| |_| |  _| | |___|  __/| |_) | |___ ___) || | | |___|  _ < 
+|____/|_|   |_____|_|   |____/|_____|____/ |_| |_____|_| \_\ """ + "\u001b[0m" + """
+    \u001b[36mby Salem-Al-Zuhairi\u001b[0m               \u001b[33;1mver: 2.5.0\u001b[0m
+============================================================
+""")
+
+    print(f"\u001b[36m🎯 Target URL      :\u001b[0m {base_url}")
+    print(f"\u001b[36m🚀 Threads         :\u001b[0m {kwargs.get('num_workers', 10)}")
+    print(f"\u001b[36m📂 Extensions      :\u001b[0m {kwargs.get('probe_extensions', []) or 'None'}")
+    print(f"\u001b[36m🔎 Ignore Case     :\u001b[0m {kwargs.get('ignore_case', False)}")
+    print(f"\u001b[36m⏳ Delay           :\u001b[0m {kwargs.get('delay', 0)} ms")
+    print(f"\u001b[36m🛡️  Client Cert     :\u001b[0m {kwargs.get('cert', 'None')}")
+    print(f"\u001b[36m🚫 Ignored Codes   :\u001b[0m {kwargs.get('ignored_codes', []) or 'None'}")
+    print(f"\u001b[36m🔄 Recursion       :\u001b[0m {kwargs.get('recursive', True)} (Interactive: {kwargs.get('interactive_recursive', False)})")
+    print("============================================================\n")
+
+    # Define dynamic interactive lock for CLI printing
+    print_lock = asyncio.Lock()
+
     async def pre_fetch_hook(url: str) -> None:
-        async with asyncio.Lock():
-            print(f'\rChecking {url} ... \u001b[0K', end='', flush=True)
+        async with print_lock:
+            # Overwrite current line (Feroxbuster style)
+            print(f'\r\u001b[36m[⧗]\u001b[0m Testing: {url}\u001b[0K', end='', flush=True)
 
-    async def found_hook(url: str) -> None:
-        async with asyncio.Lock():
-            print(f'\n\u001b[32;1mFOUND {url}\u001b[0m')
+    async def found_hook(url: str, status_code: int, size: int) -> None:
+        async with print_lock:
+            # Highlighting status code in different colors
+            if status_code == 200:
+                status_color = "\u001b[32;1m" # Green
+            elif status_code in [301, 302]:
+                status_color = "\u001b[33;1m" # Yellow
+            else:
+                status_color = "\u001b[36;1m" # Cyan
+            
+            # Print beautiful aligned result
+            print(f'\r{status_color}{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
 
-    async def error_hook(message: str) -> None:
-        async with asyncio.Lock():
-            print(f'\n\u001b[31;1mERROR: {message}\u001b[0m')
+    async def error_hook(url: str, status_code: int, size: int) -> None:
+        async with print_lock:
+            # Red color for error / hidden pages
+            print(f'\r\u001b[31;1m{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
 
     quiet = kwargs.get('quiet', False)
     kwargs['pre_fetch_callback'] = pre_fetch_hook \
         if not quiet else None
     kwargs['found_callback'] = found_hook \
-        if not quiet and verbose > 0 else None
+        if not quiet else None
     kwargs['error_callback'] = error_hook \
-        if not quiet and verbose > 0 else None
+        if not quiet else None
 
     deepbuster = Deepbuster(base_url, **kwargs)
     for word_file in word_files:
@@ -291,12 +345,14 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
             output.write('\n')
     else:
         alive = deepbuster.alive()
+        print("\n========================= RESULTS ==========================")
         if len(alive) == 0:
             print('\n\u001b[31;1mNOTHING FOUND 🧐\u001b[0m')
         else:
-            print(f'''\n\u001b[32;1mFound {len(alive)} accessible URL{'s' if len(alive) != 1 else ''}:\u001b[0m''')
+            print(f'''\u001b[32;1mFound {len(alive)} accessible URL{'s' if len(alive) != 1 else ''}:\u001b[0m''')
             for d in alive:
-                print(f'''- {d['path']}''')
+                print(f'''  \u001b[32m[+]\u001b[0m {base_url}{d['path']}''')
+        print("============================================================\n")
 
 
 if __name__ == '__main__':
@@ -325,6 +381,9 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--no-recursive', action='store_true', help="Don't search recursively", default=False)
     parser.add_argument('-R', '--interactive-recursive', action='store_true', help="Interactive recursive search (ask before entering every directory)", default=False)
     parser.add_argument('-d', '--delay', help='Add a milliseconds delay in each request', type=int, default=0)
+    parser.add_argument('-E', '--cert', help='Client certificate file (or cert,key split by comma)')
+    parser.add_argument('-N', '--ignore-code', help='Ignore responses with these HTTP status codes (comma-separated or multiple flags)', action='append', default=[])
+    parser.add_argument('-b', '--use-path-as-is', action='store_true', help='Use path as is (no leading/trailing slashes normalization)', default=False)
     parser.add_argument('-o', '--output', help='Write output to file')
     parser.add_argument('-G', '--gui', action='store_true', help="Launch web based GUI", default=False)
     parser.add_argument('-A', '--ai', action='store_true', help="AI-powered deep scanning", default=True)
@@ -332,25 +391,42 @@ if __name__ == '__main__':
     word_files = [sys.stdin]
     if len(args.word_file) > 0:
         word_files = [open(filename, 'r') for filename in args.word_file]
-    asyncio.run(main(
-        args.base_url,
-        args.verbose,
-        word_files,
-        quiet=args.quiet,
-        user_agent=args.user_agent,
-        cookie=args.cookie,
-        headers=args.header,
-        credentials=args.credentials,
-        follow_redirects=args.follow_redirects,
-        probe_extensions=args.probe_extensions.split(',') if isinstance(args.probe_extensions, str) else [],
-        probe_variations=args.probe_variations.split(',') if isinstance(args.probe_variations, str) else [],
-        num_workers=args.num_workers,
-        csv=args.csv,
-        dont_force_slash=args.dont_force_slash,
-        dont_stop_on_warning=args.dont_stop_on_warning,
-        fine_tune_404=args.fine_tune_404,
-        ignore_case=args.ignore_case,
-        recursive=not args.no_recursive,
-        interactive_recursive=args.interactive_recursive,
-        delay=args.delay,
-        output_file=args.output))
+    
+    ignored_codes = []
+    if args.ignore_code:
+        for item in args.ignore_code:
+            for code in item.split(','):
+                try:
+                    ignored_codes.append(int(code.strip()))
+                except ValueError:
+                    pass
+
+    try:
+        asyncio.run(main(
+            args.base_url,
+            args.verbose,
+            word_files,
+            quiet=args.quiet,
+            user_agent=args.user_agent,
+            cookie=args.cookie,
+            headers=args.header,
+            credentials=args.credentials,
+            follow_redirects=args.follow_redirects,
+            probe_extensions=args.probe_extensions.split(',') if isinstance(args.probe_extensions, str) else [],
+            probe_variations=args.probe_variations.split(',') if isinstance(args.probe_variations, str) else [],
+            num_workers=args.num_workers,
+            csv=args.csv,
+            dont_force_slash=args.dont_force_slash,
+            dont_stop_on_warning=args.dont_stop_on_warning,
+            fine_tune_404=args.fine_tune_404,
+            ignore_case=args.ignore_case,
+            recursive=not args.no_recursive,
+            interactive_recursive=args.interactive_recursive,
+            delay=args.delay,
+            cert=args.cert,
+            ignored_codes=ignored_codes,
+            use_path_as_is=args.use_path_as_is,
+            output_file=args.output))
+    except KeyboardInterrupt:
+        print("\n\n\u001b[31;1m[!] Caught Ctrl+C ... Saving results and shutting down deepbuster cleanly.\u001b[0m")
+        sys.exit(0)
