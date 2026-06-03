@@ -1,6 +1,8 @@
 Pipfile.lock
 *.txt
 *.csv
+*.log
 .antigravity/*
 __pycache__/*
 .env
+config.json
