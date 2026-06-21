@@ -372,6 +372,9 @@ class DeepbusterAIEngine:
                 
         wait_time = max(0.0, rpm_wait, rpd_wait, tpm_wait, tpd_wait, concurrency_wait)
         if wait_time > 0.0:
+            if wait_time > 10.0:
+                self.logger.warning(f"Rate Limiter: wait time of {wait_time:.2f}s exceeds 10s threshold. Raising timeout exception to skip.")
+                raise ValueError("Rate limit wait time too long")
             self.logger.info(f"Rate Limiter: custom limits reached. Pausing API scan for {wait_time:.2f} seconds...")
             await asyncio.sleep(wait_time)
 
@@ -466,6 +469,16 @@ class DeepbusterAIEngine:
                 self.logger.info(f"Sending async API request for path: {path} (Attempt {retries + 1}/{self.max_retries + 1})")
                 response = await http_client.fetch(req)
                 break  # Successful fetch! Break the retry loop.
+            except ValueError as ve:
+                if str(ve) == "Rate limit wait time too long":
+                    self.logger.warning(f"Aborting AI analysis of path {path} due to high rate limit delay.")
+                    return []
+                # Otherwise treat as generic exception
+                error_msg = str(ve)
+                retries += 1
+                if retries > self.max_retries:
+                    self.logger.error(f"Failed to analyze path {path} after {self.max_retries} retries. Last error: {ve}")
+                    return []
             except Exception as e:
                 error_msg = str(e)
                 is_429 = "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "Quota exceeded" in error_msg

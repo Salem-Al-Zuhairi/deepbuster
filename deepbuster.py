@@ -8,6 +8,7 @@ import ssl
 from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
 from typing import Iterable
+import urllib.parse
 from ai_engine import DeepbusterAIEngine
 
 class Deepbuster:
@@ -86,11 +87,29 @@ class Deepbuster:
         self.queue = asyncio.Queue()
         self.num_workers = kwargs.get('num_workers', 10)
         self.results = []
+        
+        # Concurrency, control, and state management
+        self.pause_event = asyncio.Event()
+        self.pause_event.set()
+        self.total_requests = 0
+        self.current_state = "running"
+        self.visited_paths = set()
+        
+        # Proxy configuration
+        self.proxy_host = kwargs.get('proxy_host', None)
+        self.proxy_port = kwargs.get('proxy_port', None)
+        if self.proxy_port is not None:
+            try:
+                self.proxy_port = int(self.proxy_port)
+            except ValueError:
+                self.proxy_port = None
+        self.proxy_username = kwargs.get('proxy_username', None)
+        self.proxy_password = kwargs.get('proxy_password', None)
 
     async def check_wildcard(self) -> bool:
         # Generate two completely unique, dynamic, and random nonexistent paths
-        p1 = f"/deepbuster_{uuid.uuid4().hex}"
-        p2 = f"/deepbuster_{uuid.uuid4().hex}_{uuid.uuid4().hex}"
+        p1 = f"/{uuid.uuid4().hex}"
+        p2 = f"/{uuid.uuid4().hex}_{uuid.uuid4().hex}"
         
         has_wildcard = False
         try:
@@ -106,7 +125,11 @@ class Deepbuster:
                                auth_username=self.auth_user_name,
                                auth_password=self.auth_password,
                                follow_redirects=self.follow_redirects,
-                               ssl_options=self.ssl_ctx)
+                               ssl_options=self.ssl_ctx,
+                               proxy_host=self.proxy_host,
+                               proxy_port=self.proxy_port,
+                               proxy_username=self.proxy_username,
+                               proxy_password=self.proxy_password)
             r1 = await http_client.fetch(req1)
             
             if r1.code == 200:
@@ -115,7 +138,7 @@ class Deepbuster:
                     self.custom_404_lengths.add(len(r1.body))
                     # Save the normalized base size (subtracting path length) in case the path is reflected in the HTML
                     self.custom_404_base_sizes.add(len(r1.body) - len(p1))
-
+ 
                 # Fetch the second random path to detect dynamic/reflected soft 404s
                 req2 = HTTPRequest(f"{self.base_url}{p2}",
                                    user_agent=self.user_agent,
@@ -123,7 +146,11 @@ class Deepbuster:
                                    auth_username=self.auth_user_name,
                                    auth_password=self.auth_password,
                                    follow_redirects=self.follow_redirects,
-                                   ssl_options=self.ssl_ctx)
+                                   ssl_options=self.ssl_ctx,
+                                   proxy_host=self.proxy_host,
+                                   proxy_port=self.proxy_port,
+                                   proxy_username=self.proxy_username,
+                                   proxy_password=self.proxy_password)
                 r2 = await http_client.fetch(req2)
                 if r2.code == 200:
                     if self.fine_tune_404:
@@ -132,7 +159,7 @@ class Deepbuster:
         except Exception:
             pass
         return has_wildcard
-
+ 
     async def trigger_ai_analysis(self, path, response_headers=None, response_body=None):
         if not self.ai_enabled or not self.ai_engine:
             return
@@ -152,7 +179,11 @@ class Deepbuster:
                                   auth_username=self.auth_user_name,
                                   auth_password=self.auth_password,
                                   follow_redirects=self.follow_redirects,
-                                  ssl_options=self.ssl_ctx)
+                                  ssl_options=self.ssl_ctx,
+                                  proxy_host=self.proxy_host,
+                                  proxy_port=self.proxy_port,
+                                  proxy_username=self.proxy_username,
+                                  proxy_password=self.proxy_password)
                 response = await http_client.fetch(req)
                 response_headers = response.headers
                 response_body = response.body
@@ -177,6 +208,7 @@ class Deepbuster:
         self.current_ai_status = "Idle"
 
     async def run(self, paths: Iterable[str]) -> None:
+        self.current_state = "running"
         has_wildcard = await self.check_wildcard()
         if has_wildcard:
             print("\n\u001b[33;1mWARNING: Active response on random HTTP requests! (Wildcard detected)\u001b[0m")
@@ -218,36 +250,59 @@ class Deepbuster:
         # Drain all background AI tasks that might inject more paths
         while len(self.ai_tasks) > 0:
             self.current_ai_status = f"Waiting for {len(self.ai_tasks)} AI task(s)"
-            # Wait for currently running AI tasks to finish
-            await asyncio.gather(*list(self.ai_tasks), return_exceptions=True)
+            # Wait for currently running AI tasks to finish with a maximum timeout of 15 seconds
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*list(self.ai_tasks), return_exceptions=True),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                print("\n[!] AI tasks wait timed out after 15 seconds. Proceeding to finish scan.")
+                break
             # Re-join queue in case those AI tasks added new paths
             await self.queue.join()
             
-        self.current_ai_status = "Done"
+            self.current_ai_status = "Done"
+        self.current_state = "completed"
 
         for worker in workers:
             worker.cancel()
 
     async def try_url(self) -> None:
+        await self.pause_event.wait()
+        if self.current_state == "stopped":
+            return
         if self.delay > 0:
             await asyncio.sleep(self.delay / 1000.0)
+        if self.current_state == "stopped":
+            return
         path = await self.queue.get()
-        if self.ai_enabled and self.ai_engine:
-            for segment in path.strip("/").split("/"):
-                if segment:
-                    self.ai_engine.mark_word_processed(segment)
-        if not self.use_path_as_is:
-            if not path.startswith('/'):
-                path = '/' + path
-            if not self.dont_force_slash and not path.endswith('/'):
-                # Only append slash if there's no extension in the last path segment
-                last_segment = path.split('/')[-1]
-                if '.' not in last_segment:
-                    path = path + '/'
-        url = f'{self.base_url}{path}'
-        if callable(self.pre_fetch_callback):
-            await self.pre_fetch_callback(path)
+        if self.current_state == "stopped":
+            self.queue.task_done()
+            return
+            
+        got_path = True
         try:
+            if not self.use_path_as_is:
+                if not path.startswith('/'):
+                    path = '/' + path
+                if not self.dont_force_slash and not path.endswith('/'):
+                    # Only append slash if there's no extension in the last path segment
+                    last_segment = path.split('/')[-1]
+                    if '.' not in last_segment:
+                        path = path + '/'
+            
+            # Deduplicate using self.visited_paths
+            if path in self.visited_paths:
+                return
+            self.visited_paths.add(path)
+
+            # Construct URL by quoting the path correctly (keeping slashes)
+            quoted_path = urllib.parse.quote(path, safe='/')
+            url = f'{self.base_url}{quoted_path}'
+            if callable(self.pre_fetch_callback):
+                await self.pre_fetch_callback(path)
+            
             http_client = AsyncHTTPClient()
             headers = dict(self.headers) if self.headers else {}
             if self.cookie:
@@ -259,7 +314,13 @@ class Deepbuster:
                               auth_username=self.auth_user_name,
                               auth_password=self.auth_password,
                               follow_redirects=self.follow_redirects,
-                              ssl_options=self.ssl_ctx)
+                              ssl_options=self.ssl_ctx,
+                              proxy_host=self.proxy_host,
+                              proxy_port=self.proxy_port,
+                              proxy_username=self.proxy_username,
+                              proxy_password=self.proxy_password,
+                              connect_timeout=10.0,
+                              request_timeout=10.0)
             response = await http_client.fetch(req)
             if response.code in self.ignored_codes:
                 return
@@ -325,8 +386,19 @@ class Deepbuster:
                 'status_code': e.code,
                 'headers': [],
             })
+        except Exception as e:
+            print(f"[!] Request exception for {path}: {e}")
+            if callable(self.error_callback):
+                await self.error_callback(path, 0, 0)
+            self.results.append({
+                'path': path,
+                'effective_url': '',
+                'status_code': 0,
+                'headers': [],
+            })
         finally:
-            self.queue.task_done()
+            if got_path:
+                self.queue.task_done()
 
     async def worker(self) -> None:
         while True:
@@ -334,6 +406,8 @@ class Deepbuster:
                 await self.try_url()
             except asyncio.CancelledError:
                 return
+            except Exception as e:
+                print(f"[!] Worker outer loop error: {e}")
 
     async def handle_recursive_directory(self, path: str) -> None:
         if path in self.scanned_directories:
@@ -370,6 +444,47 @@ class Deepbuster:
 
     def alive(self) -> Iterable[str]:
         return [r for r in self.results if r['status_code'] == 200]
+
+    def get_current_scanning_directory(self) -> str:
+        if not self.queue.empty():
+            # In asyncio.Queue, _queue is a deque
+            first_item = self.queue._queue[0]
+            last_slash_idx = first_item.rfind('/')
+            if last_slash_idx > 0:
+                return first_item[:last_slash_idx + 1]
+        return '/'
+
+    async def skip_current_directory(self):
+        dir_to_skip = self.get_current_scanning_directory()
+        new_items = []
+        skipped_count = 0
+        while not self.queue.empty():
+            try:
+                item = self.queue.get_nowait()
+                self.queue.task_done()
+                if item.startswith(dir_to_skip):
+                    skipped_count += 1
+                else:
+                    new_items.append(item)
+            except asyncio.QueueEmpty:
+                break
+        
+        for item in new_items:
+            await self.queue.put(item)
+            
+        return dir_to_skip, skipped_count
+
+    def get_progress_snapshot(self):
+        return {
+            "total_requests": getattr(self, 'total_requests', 0),
+            "queue_size": self.queue.qsize(),
+            "scanned_dirs": list(self.scanned_directories),
+            "ai_status": getattr(self, 'current_ai_status', 'Inactive'),
+            "ai_tasks_count": len(getattr(self, 'ai_tasks', [])),
+            "results_count": len(self.results),
+            "is_paused": not self.pause_event.is_set(),
+            "status": getattr(self, 'current_state', 'running')
+        }
 
 
 async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], **kwargs) -> None:
@@ -448,10 +563,7 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
 
     async def error_hook(url: str, status_code: int, size: int) -> None:
         async with print_lock:
-            # Hide 404 error logs by default to keep CLI clean
-            if status_code == 404:
-                return
-            # Red color for other error / hidden pages
+            # Red color for error / hidden pages
             print(f'\r\u001b[31;1m{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
 
     quiet = kwargs.get('quiet', False)
@@ -494,7 +606,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='deepbuster', description='Directory Buster')
     # -S : Silent Mode. Don't show tested words. (For dumb terminals) 
     # لم تتم اضافته لانه قديم ولا داعي له هو شبيه ب -q لكنه مخصص للتيرمنال القديم الذي لا يدعم الالوان
-    parser.add_argument('base_url', help='Base URL, e.g. https://example.com')
+    parser.add_argument('base_url', help='Base URL, e.g. https://example.com', nargs='?')
     parser.add_argument('-n', '--num-workers', help='parallelize scanning with n workers running concurrently', type=int, default=DEFAULT_NUM_WORKERS)
     parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('-q', '--quiet', action='store_true', default=False)
@@ -521,18 +633,31 @@ if __name__ == '__main__':
     parser.add_argument('-G', '--gui', action='store_true', help="Launch web based GUI", default=False)
     parser.add_argument('-A', '--ai', action='store_true', help="AI-powered deep scanning", default=False)
     args = parser.parse_args()
+    
+    if args.gui:
+        import gui_server
+        gui_server.start_gui_server()
+        sys.exit(0)
+
+    if not args.base_url:
+        parser.error("the following arguments are required: base_url")
+
     word_files = [sys.stdin]
     if len(args.word_file) > 0:
         word_files = [open(filename, 'r') for filename in args.word_file]
     
     ignored_codes = []
-    if args.ignore_code:
+    if not args.ignore_code:
+        ignored_codes = [404]
+    else:
         for item in args.ignore_code:
             for code in item.split(','):
-                try:
-                    ignored_codes.append(int(code.strip()))
-                except ValueError:
-                    pass
+                cleaned = code.strip()
+                if cleaned:
+                    try:
+                        ignored_codes.append(int(cleaned))
+                    except ValueError:
+                        pass
 
     try:
         asyncio.run(main(
