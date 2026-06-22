@@ -7,11 +7,156 @@ import uuid
 import ssl
 from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
-from typing import Iterable
+from typing import Iterable, Any
 import urllib.parse
 from ai_engine import DeepbusterAIEngine
+import os
+
+def parse_headers(headers_input):
+    headers_dict = {}
+    if not headers_input:
+        return headers_dict
+    
+    if isinstance(headers_input, list):
+        for header in headers_input:
+            if ':' in header:
+                k, v = header.split(':', 1)
+                headers_dict[k.strip()] = v.strip()
+    elif isinstance(headers_input, dict):
+        for k, v in headers_input.items():
+            headers_dict[str(k).strip()] = str(v).strip()
+    elif isinstance(headers_input, str):
+        for line in headers_input.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers_dict[k.strip()] = v.strip()
+    return headers_dict
+
+def parse_proxy(proxy_input):
+    if not proxy_input:
+        return None, None
+    if isinstance(proxy_input, str):
+        proxy_input = proxy_input.strip()
+        if not proxy_input:
+            return None, None
+        if ":" in proxy_input:
+            host, port = proxy_input.split(":", 1)
+            try:
+                return host.strip(), int(port.strip())
+            except ValueError:
+                return host.strip(), 1080
+        return proxy_input, 1080
+    return None, None
+
+def parse_ignore_codes(ignore_input):
+    ignored_codes = [404]
+    if not ignore_input:
+        return ignored_codes
+    
+    if isinstance(ignore_input, list):
+        ignored_codes = []
+        for item in ignore_input:
+            if isinstance(item, int):
+                ignored_codes.append(item)
+            elif isinstance(item, str):
+                for code in item.split(','):
+                    cleaned = code.strip()
+                    if cleaned:
+                        try:
+                            ignored_codes.append(int(cleaned))
+                        except ValueError:
+                            pass
+    elif isinstance(ignore_input, str):
+        ignored_codes = []
+        for code in ignore_input.split(','):
+            cleaned = code.strip()
+            if cleaned:
+                try:
+                    ignored_codes.append(int(cleaned))
+                except ValueError:
+                    pass
+    elif isinstance(ignore_input, (int, float)):
+        ignored_codes = [int(ignore_input)]
+    return ignored_codes
+
+def parse_extensions(ext_input):
+    probe_extensions = []
+    if not ext_input:
+        return probe_extensions
+    
+    if isinstance(ext_input, list):
+        for item in ext_input:
+            item_str = str(item).strip()
+            if item_str:
+                if not item_str.startswith('.'):
+                    item_str = '.' + item_str
+                probe_extensions.append(item_str)
+    elif isinstance(ext_input, str):
+        for ext in ext_input.split(','):
+            cleaned = ext.strip()
+            if cleaned:
+                if not cleaned.startswith('.'):
+                    cleaned = '.' + cleaned
+                probe_extensions.append(cleaned)
+    return probe_extensions
+
+def parse_variations(var_input):
+    probe_variations = []
+    if not var_input:
+        return probe_variations
+    
+    if isinstance(var_input, list):
+        for item in var_input:
+            item_str = str(item).strip()
+            if item_str:
+                probe_variations.append(item_str)
+    elif isinstance(var_input, str):
+        for var in var_input.split(','):
+            cleaned = var.strip()
+            if cleaned:
+                probe_variations.append(cleaned)
+    return probe_variations
+
+def save_output(output_file, results, is_csv=False, base_url=""):
+    try:
+        out_dir = os.path.dirname(os.path.abspath(output_file))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+    except Exception as e:
+        print(f"[!] Failed to create output directory: {e}")
+
+    try:
+        with open(output_file, 'w+', encoding='utf-8', errors='ignore') as output:
+            if is_csv:
+                ESC_QUOTES = str.maketrans({'"': r'\"'})
+                FIELDS = ['status_code', 'path', 'effective_url', 'headers']
+                output.write(f'''{';'.join(FIELDS)}\n''')
+                for result in results:
+                    headers_str = ""
+                    if result.get('headers'):
+                        if isinstance(result['headers'], dict):
+                            headers_str = ','.join([f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers'].items()])
+                        else:
+                            headers_str = ','.join([f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers']])
+                    output.write(f'''{result['status_code']};"{result['path'].translate(ESC_QUOTES)}";"{result.get('effective_url', '').translate(ESC_QUOTES)}";{headers_str}\n''')
+            else:
+                output.write("========================= RESULTS ==========================\n")
+                alive = [r for r in results if r['status_code'] == 200]
+                if len(alive) == 0:
+                    output.write("NOTHING FOUND 🧐\n")
+                else:
+                    output.write(f"Found {len(alive)} accessible URL(s):\n")
+                    for d in alive:
+                        output.write(f"  [+] {base_url}{d['path']}\n")
+                output.write("============================================================\n")
+    except Exception as e:
+        print(f"[!] Failed to write output file: {e}")
 
 class Deepbuster:
+    found_callback: Any
+    error_callback: Any
+    pre_fetch_callback: Any
+
     def __init__(self, base_url: str, **kwargs) -> None:
         self.base_url = base_url
         self.found_callback = kwargs.get('found_callback', None)
@@ -23,7 +168,7 @@ class Deepbuster:
         self.dont_stop_on_warning = kwargs.get('dont_stop_on_warning', False)
         self.ignore_case = kwargs.get('ignore_case', False)
         self.delay = kwargs.get('delay', 0)
-        self.ignored_codes = set(kwargs.get('ignored_codes', []))
+        self.ignored_codes = set(parse_ignore_codes(kwargs.get('ignored_codes', [])))
         self.use_path_as_is = kwargs.get('use_path_as_is', False)
         self.fine_tune_404 = kwargs.get('fine_tune_404', False)
         self.custom_404_lengths = set()
@@ -69,18 +214,10 @@ class Deepbuster:
             else:
                 self.ai_unchecked_words = self.ai_engine.load_state_unchecked_words()
                 self.current_ai_status = "Initialized"
-        self.probe_extensions = kwargs.get('probe_extensions', [])
-        self.probe_variations = kwargs.get('probe_variations', [])
+        self.probe_extensions = parse_extensions(kwargs.get('probe_extensions', []))
+        self.probe_variations = parse_variations(kwargs.get('probe_variations', []))
         self.cookie = kwargs.get('cookie', None) or kwargs.get('cookies', None)
-        headers = kwargs.get('headers', None)
-        self.headers = {}
-        if isinstance(headers, list):
-            for header in headers:
-                if ':' in header:
-                    k, v = header.split(':', 1)
-                    self.headers[k.strip()] = v.strip()
-        elif isinstance(headers, dict):
-            self.headers = headers
+        self.headers = parse_headers(kwargs.get('headers', None))
         credentials = kwargs.get('credentials', None)
         self.auth_user_name, self.auth_password = credentials.split(':', 1) \
             if isinstance(credentials, str) else (None, None)
@@ -98,6 +235,8 @@ class Deepbuster:
         # Proxy configuration
         self.proxy_host = kwargs.get('proxy_host', None)
         self.proxy_port = kwargs.get('proxy_port', None)
+        if self.proxy_host and not self.proxy_port and ':' in self.proxy_host:
+            self.proxy_host, self.proxy_port = parse_proxy(self.proxy_host)
         if self.proxy_port is not None:
             try:
                 self.proxy_port = int(self.proxy_port)
@@ -341,7 +480,7 @@ class Deepbuster:
                     
                     if has_404_keyword:
                         if callable(self.error_callback):
-                            await self.error_callback(f'{path} -> Ignored (Soft 404 matching nonexistent size and signature)')
+                            await self.error_callback(f'{path} -> Ignored (Soft 404 matching nonexistent size and signature)', 404, len(response.body))
                         self.results.append({
                             'path': path,
                             'effective_url': response.effective_url,
@@ -540,15 +679,15 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
     # Define dynamic interactive lock for CLI printing
     print_lock = asyncio.Lock()
 
-    async def pre_fetch_hook(url: str) -> None:
+    async def pre_fetch_hook(path: str) -> None:
         async with print_lock:
             ai_status = ""
             if deepbuster.ai_enabled:
                 ai_status = f" | \u001b[35;1m[AI: {deepbuster.current_ai_status} ({len(deepbuster.ai_tasks)} tasks)]\u001b[0m"
             # Overwrite current line (Feroxbuster style)
-            print(f'\r\u001b[36m[⧗]\u001b[0m Testing: {url}{ai_status}\u001b[0K', end='', flush=True)
+            print(f'\r\u001b[36m[⧗]\u001b[0m Testing: {path}{ai_status}\u001b[0K', end='', flush=True)
 
-    async def found_hook(url: str, status_code: int, size: int) -> None:
+    async def found_hook(path: str, status_code: int, size: int) -> None:
         async with print_lock:
             # Highlighting status code in different colors
             if status_code == 200:
@@ -559,12 +698,12 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
                 status_color = "\u001b[36;1m" # Cyan
             
             # Print beautiful aligned result
-            print(f'\r{status_color}{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
+            print(f'\r{status_color}{status_code:<5}\u001b[0m  GET   {size:>8}b   {path}\u001b[0K')
 
-    async def error_hook(url: str, status_code: int, size: int) -> None:
+    async def error_hook(path: str, status_code: int, size: int) -> None:
         async with print_lock:
             # Red color for error / hidden pages
-            print(f'\r\u001b[31;1m{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
+            print(f'\r\u001b[31;1m{status_code:<5}\u001b[0m  GET   {size:>8}b   {path}\u001b[0K')
 
     quiet = kwargs.get('quiet', False)
     deepbuster.pre_fetch_callback = pre_fetch_hook if not quiet else None
@@ -574,21 +713,11 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
     for word_file in word_files:
         await deepbuster.run(word_file.readlines())
 
-    if kwargs.get('output_file'):
-        output = open(kwargs.get('output_file'), 'w+')
+    output_file = kwargs.get('output_file')
+    if output_file:
+        save_output(output_file, deepbuster.results, is_csv=kwargs.get('csv', False), base_url=base_url)
     else:
-        output = sys.stdout
-
-    if kwargs.get('csv'):
-        ESC_QUOTES = str.maketrans({'"': r'\"'})
-        FIELDS = ['status_code', 'path', 'effective_url', 'headers']
-        output.write(f'''{';'.join(FIELDS)}\n''')
-        for result in deepbuster.results:
-            output.write(f'''{result['status_code']};"{result['path'].translate(ESC_QUOTES)}";"{result['effective_url'].translate(ESC_QUOTES)}";''')
-            headers = [f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers']]
-            output.write(','.join(headers))
-            output.write('\n')
-    else:
+        # CLI print to stdout
         alive = deepbuster.alive()
         print("\n========================= RESULTS ==========================")
         if len(alive) == 0:
@@ -646,18 +775,7 @@ if __name__ == '__main__':
     if len(args.word_file) > 0:
         word_files = [open(filename, 'r') for filename in args.word_file]
     
-    ignored_codes = []
-    if not args.ignore_code:
-        ignored_codes = [404]
-    else:
-        for item in args.ignore_code:
-            for code in item.split(','):
-                cleaned = code.strip()
-                if cleaned:
-                    try:
-                        ignored_codes.append(int(cleaned))
-                    except ValueError:
-                        pass
+    ignored_codes = parse_ignore_codes(args.ignore_code)
 
     try:
         asyncio.run(main(
@@ -670,8 +788,8 @@ if __name__ == '__main__':
             headers=args.header,
             credentials=args.credentials,
             follow_redirects=args.follow_redirects,
-            probe_extensions=args.probe_extensions.split(',') if isinstance(args.probe_extensions, str) else [],
-            probe_variations=args.probe_variations.split(',') if isinstance(args.probe_variations, str) else [],
+            probe_extensions=parse_extensions(args.probe_extensions),
+            probe_variations=parse_variations(args.probe_variations),
             num_workers=args.num_workers,
             csv=args.csv,
             dont_force_slash=args.dont_force_slash,

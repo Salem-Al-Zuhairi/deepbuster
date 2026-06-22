@@ -8,9 +8,16 @@ import time
 from datetime import datetime
 import json
 from flask import Flask, jsonify, request, send_from_directory, render_template
-
 import database
-from deepbuster import Deepbuster
+from deepbuster import (
+    Deepbuster,
+    parse_headers,
+    parse_proxy,
+    parse_ignore_codes,
+    parse_extensions,
+    parse_variations,
+    save_output
+)
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
