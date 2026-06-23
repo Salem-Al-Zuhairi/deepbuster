@@ -509,6 +509,42 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }
 
+    // Dynamic recalculation of visual queue status counters (prevents duplicate count bugs)
+    function updateVisualCounters() {
+        const queueList = document.getElementById("visualQueueList");
+        if (!queueList) return;
+
+        const items = queueList.querySelectorAll(".endpoint-item");
+        const total = items.length;
+
+        let success = 0;
+        let pending = 0;
+        let failed = 0;
+
+        items.forEach(item => {
+            const statusSpan = item.querySelector(".endpoint-status");
+            if (statusSpan) {
+                if (statusSpan.classList.contains("success")) {
+                    success++;
+                } else if (statusSpan.classList.contains("failed")) {
+                    failed++;
+                } else {
+                    pending++;
+                }
+            }
+        });
+
+        const activeCount = document.getElementById("visEndpointsCount");
+        const queueCount = document.getElementById("visQueueCount");
+        const successCount = document.getElementById("visSuccessCount");
+        const failedCount = document.getElementById("visFailedCount");
+
+        if (activeCount) activeCount.textContent = total;
+        if (queueCount) queueCount.textContent = pending;
+        if (successCount) successCount.textContent = success;
+        if (failedCount) failedCount.textContent = failed;
+    }
+
     // Visual Capture Grid queues helper
     function addVisualQueueRow(path, statusCode, screenshotPath = null) {
         const queueList = document.getElementById("visualQueueList");
@@ -527,6 +563,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (statusSpan && statusSpan.textContent !== "Captured") {
                     statusSpan.className = "endpoint-status success";
                     statusSpan.textContent = "Captured";
+                    updateVisualCounters();
                 }
             }
             return;
@@ -548,12 +585,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Also append directly to gallery
             appendGalleryCard(path, screenshotPath, false);
-
-            // Update success counter
-            const activeCount = document.getElementById("visEndpointsCount");
-            const visSuccessCount = document.getElementById("visSuccessCount");
-            if (activeCount) activeCount.textContent = knownPaths.size;
-            if (visSuccessCount) visSuccessCount.textContent = parseInt(visSuccessCount.textContent || 0) + 1;
+            updateVisualCounters();
         } else {
             div.innerHTML = `
                 <div class="endpoint-meta">
@@ -563,12 +595,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span class="endpoint-status pending" id="status_${rowId}">Pending</span>
             `;
             queueList.appendChild(div);
-
-            // Update queue/active counters
-            const activeCount = document.getElementById("visEndpointsCount");
-            const queueCount = document.getElementById("visQueueCount");
-            if (activeCount) activeCount.textContent = knownPaths.size;
-            if (queueCount) queueCount.textContent = parseInt(queueCount.textContent || 0) + 1;
+            updateVisualCounters();
 
             // Auto assess screenshots triggers if checked
             const autoScreenshot = document.getElementById("autoScreenshot");
@@ -584,13 +611,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (statusSpan) {
             statusSpan.className = "endpoint-status pending";
             statusSpan.textContent = "Capturing...";
+            updateVisualCounters();
         }
-
-        const visQueueCount = document.getElementById("visQueueCount");
-        const visSuccessCount = document.getElementById("visSuccessCount");
-        const visFailedCount = document.getElementById("visFailedCount");
-
-        if (visQueueCount) visQueueCount.textContent = Math.max(0, parseInt(visQueueCount.textContent || 0) - 1);
 
         try {
             const resp = await fetch("/api/visual-capture", {
@@ -609,21 +631,25 @@ document.addEventListener("DOMContentLoaded", () => {
                     statusSpan.className = "endpoint-status failed";
                     statusSpan.textContent = "Failed";
                 }
-                if (visFailedCount) visFailedCount.textContent = parseInt(visFailedCount.textContent || 0) + 1;
+                updateVisualCounters();
                 appendGalleryCard(path, null, true);
             } else {
                 if (statusSpan) {
                     statusSpan.className = "endpoint-status success";
                     statusSpan.textContent = "Captured";
                 }
-                if (visSuccessCount) visSuccessCount.textContent = parseInt(visSuccessCount.textContent || 0) + 1;
+                updateVisualCounters();
 
                 // Poll check target file until generated successfully to display preview
                 pollScreenshotReady(path);
             }
         } catch (e) {
             console.error("Screenshot launch error:", e);
-            if (visFailedCount) visFailedCount.textContent = parseInt(visFailedCount.textContent || 0) + 1;
+            if (statusSpan) {
+                statusSpan.className = "endpoint-status failed";
+                statusSpan.textContent = "Failed";
+            }
+            updateVisualCounters();
         }
     }
 

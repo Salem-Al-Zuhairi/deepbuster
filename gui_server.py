@@ -225,6 +225,60 @@ def run_scanner_loop(target_url, wordlist, kwargs, scan_id):
     finally:
         active_scan.loop.close()
 
+def check_target_active(target_url, proxy=None):
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+    import ssl
+
+    # Clean target URL: ensure scheme exists
+    parsed = urllib.parse.urlparse(target_url)
+    if not parsed.scheme or parsed.scheme not in ("http", "https"):
+        return False, "Invalid URL scheme. Target must start with http:// or https://"
+
+    try:
+        # Build opener with optional proxy
+        handlers = []
+        if proxy:
+            proxy_host, proxy_port = proxy
+            if proxy_host and proxy_port:
+                proxy_url = f"http://{proxy_host}:{proxy_port}"
+                proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+                handlers.append(proxy_handler)
+        
+        # Don't fail on self-signed certificates
+        context = ssl._create_unverified_context()
+        https_handler = urllib.request.HTTPSHandler(context=context)
+        handlers.append(https_handler)
+        
+        opener = urllib.request.build_opener(*handlers)
+        
+        # Try HEAD request first for efficiency
+        req = urllib.request.Request(
+            target_url,
+            method="HEAD",
+            headers={'User-Agent': 'Mozilla/5.0 Deepbuster/2.5.0 Probe'}
+        )
+        
+        try:
+            with opener.open(req, timeout=5) as response:
+                return True, None
+        except urllib.error.HTTPError:
+            # Server responded with an HTTP status code, so it is active
+            return True, None
+        except urllib.error.URLError:
+            # Connection failed. Let's try a fallback GET request
+            try:
+                req.method = "GET"
+                with opener.open(req, timeout=5) as response:
+                    return True, None
+            except urllib.error.HTTPError:
+                return True, None
+            except Exception as e:
+                return False, f"Target host is unreachable: {str(e)}"
+    except Exception as e:
+        return False, f"Target check error: {str(e)}"
+
 # Flask API Handlers
 @app.route("/")
 def index():
@@ -282,6 +336,11 @@ def start_scan():
 
     # Parse proxy
     proxy_host, proxy_port = parse_proxy(data.get("proxy", ""))
+
+    # Validate target host is active and responsive before starting
+    is_active, active_err = check_target_active(target_url, proxy=(proxy_host, proxy_port))
+    if not is_active:
+        return jsonify({"error": active_err}), 400
 
     # Set up ignore code list
     ignored_codes = parse_ignore_codes(data.get("ignoreCodes", ""))
