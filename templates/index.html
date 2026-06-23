@@ -1,48 +1,68 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Deepbuster</title>
+    <!-- Favicon -->
+    <link rel="shortcut icon" href="{{ url_for('static', filename='img/logo.png') }}" type="image/png">
     <!-- Premium Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap"
+        rel="stylesheet">
     <!-- Main Style Sheet -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <!-- Vis-Network for beautiful Canvas Hierarchical Tree Graphs -->
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
+
 <body>
     <div class="app-container">
         <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <div class="brand">
-                <div class="logo-orb"></div>
+                <img src="{{ url_for('static', filename='img/logo.png') }}" class="logo-img" alt="Deepbuster Logo">
                 <div>
                     <h1>DEEPBUSTER</h1>
-                    <span class="version">Beta Version</span>
+                    <span class="version">By OverPowerTeam ● Beta Version</span>
                 </div>
             </div>
-            
+
             <nav class="nav-menu">
                 <button class="nav-btn active" data-tab="scan">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
                     Scan & Live View
                 </button>
                 <button class="nav-btn" data-tab="graph">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 6v6l4 2"/></svg>
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 3v8m0 0H5v6m7-6h7v6"/>
+                        <circle cx="12" cy="3" r="2" fill="currentColor" stroke="none"/>
+                        <circle cx="5" cy="17" r="2" fill="currentColor" stroke="none"/>
+                        <circle cx="19" cy="17" r="2" fill="currentColor" stroke="none"/>
+                    </svg>
                     Live Graph Map
                 </button>
                 <button class="nav-btn" data-tab="visual">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                        <circle cx="12" cy="13" r="4" />
+                    </svg>
                     Visual Capture
                 </button>
-                <button class="nav-btn" data-tab="evasion">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                    Evasion & Efficacy
-                </button>
                 <button class="nav-btn" data-tab="history">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
                     Scan History
+                </button>
+                <button class="nav-btn" data-tab="evasion">
+                    <svg class="icon" viewBox="0 0 24 24">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
+                    Settings & Configration
                 </button>
             </nav>
 
@@ -63,17 +83,7 @@
 
         <!-- Main Content Area -->
         <main class="main-content">
-            <!-- Global Dashboard Stats Header -->
-            <header class="top-header">
-                <div class="title-section">
-                    <h2>SECURE SCAN CONSOLE</h2>
-                    <p>Subdomain and directory intelligence discovery workspace</p>
-                </div>
-                <div class="live-badge-container">
-                    <span class="pulse-dot"></span>
-                    <span class="live-text">OPERATIONAL STREAM</span>
-                </div>
-            </header>
+
 
             <!-- Scan Panel -->
             <section class="tab-panel active" id="tab-scan">
@@ -82,72 +92,30 @@
                     <div class="control-card glass">
                         <div class="card-header">
                             <h3>Scan Directives</h3>
-                            <span class="subtitle">Set parameters to initiate directory discovery</span>
+                            <span class="subtitle">Set parameters to initiate discovery</span>
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="targetUrl">Target Host URL</label>
-                            <input type="url" id="targetUrl" placeholder="https://example.com" value="http://127.0.0.1:8000">
+                            <input type="url" id="targetUrl" placeholder="https://example.com">
                         </div>
 
                         <div class="form-row">
                             <div class="form-group half">
                                 <label for="wordlistCategory">Wordlist Category</label>
                                 <select id="wordlistCategory">
-                                    <option value="common">Common Paths (default)</option>
-                                    <option value="directories">Directories list</option>
-                                    <option value="files">Files list</option>
-                                    <option value="ai">AI Generated</option>
+                                    <option value="custom" selected>wordlist path</option>
                                     <option value="url">List from URL</option>
-                                    <option value="custom" selected>Custom wordlist path</option>
                                 </select>
                             </div>
                             <div class="form-group half">
                                 <label for="wordlistPath">Full File Path</label>
                                 <div class="input-browse-group">
-                                    <input type="text" id="wordlistPath" placeholder="/home/kali/deepbuster/mylist.txt" value="/home/kali/deepbuster/mylist.txt">
-                                    <button type="button" class="btn btn-secondary btn-browse" data-target="wordlistPath">Browse</button>
+                                    <input type="text" id="wordlistPath" placeholder="/home/kali/mylist.txt">
+                                    <button type="button" class="btn btn-secondary btn-browse"
+                                        data-target="wordlistPath">Browse</button>
                                 </div>
                             </div>
-                        </div>
-
-                        <!-- Append Extensions Section -->
-                        <div class="collapsible-section">
-                            <label class="check-container">
-                                <input type="checkbox" id="enableExtensions">
-                                <span class="checkmark"></span>
-                                Append each word with this extension
-                            </label>
-                            <div class="collapsible-content" id="extensionsBlock" style="display:none;">
-                                <div class="radio-group">
-                                    <label class="radio-container">
-                                        <input type="radio" name="extSource" id="extSourceInput" value="input" checked>
-                                        <span class="radio-check"></span>
-                                        Comma-separated list:
-                                    </label>
-                                    <input type="text" id="extensionsInput" placeholder="php,html,js" class="sub-input">
-                                </div>
-                                <div class="radio-group">
-                                    <label class="radio-container">
-                                        <input type="radio" name="extSource" id="extSourceFile" value="file">
-                                        <span class="radio-check"></span>
-                                        Select file from local filesystem:
-                                    </label>
-                                    <div class="input-browse-group sub-input-group">
-                                        <input type="text" id="extensionsFilePath" placeholder="/path/to/extensions.txt" class="sub-input" disabled>
-                                        <button type="button" class="btn btn-secondary btn-browse sub-btn" id="btnBrowseExtensions" data-target="extensionsFilePath" disabled>Browse</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Threads Slider -->
-                        <div class="form-group range-group">
-                            <div class="range-labels">
-                                <label for="threads">Concurrent Workers (Threads)</label>
-                                <span class="range-val" id="threadsVal">20</span>
-                            </div>
-                            <input type="range" id="threads" min="1" max="150" value="20" class="range-slider">
                         </div>
 
                         <!-- AI Enable Toggle -->
@@ -163,21 +131,26 @@
                         <div class="accordion-container">
                             <button type="button" class="accordion-trigger" id="btnAccordionTrigger">
                                 <span>Advanced Evasion & Efficacy Options</span>
-                                <svg class="chevron" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+                                <svg class="chevron" viewBox="0 0 24 24">
+                                    <path d="M7 10l5 5 5-5z" />
+                                </svg>
                             </button>
                             <div class="accordion-panel" id="accordionPanel">
                                 <div class="advanced-settings-grid">
                                     <div class="form-group">
                                         <label for="optUserAgent">Custom User Agent</label>
-                                        <input type="text" id="optUserAgent" placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...">
+                                        <input type="text" id="optUserAgent"
+                                            placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...">
                                     </div>
                                     <div class="form-group">
                                         <label for="optCookies">Cookies Data</label>
-                                        <input type="text" id="optCookies" placeholder="PHPSESSID=abcdef12345; security=low">
+                                        <input type="text" id="optCookies"
+                                            placeholder="PHPSESSID=abcdef12345; security=low">
                                     </div>
                                     <div class="form-group full-width">
                                         <label for="optHeaders">Custom HTTP Headers (one per line)</label>
-                                        <textarea id="optHeaders" rows="3" placeholder="Authorization: Bearer mytoken&#10;Origin: http://localhost"></textarea>
+                                        <textarea id="optHeaders" rows="3"
+                                            placeholder="Authorization: Bearer mytoken&#10;Origin: http://localhost"></textarea>
                                     </div>
                                     <div class="form-group">
                                         <label for="optProxy">HTTP/SOCKS Proxy</label>
@@ -193,7 +166,7 @@
                                             <input type="password" id="optProxyPass" placeholder="password">
                                         </div>
                                     </div>
-                                    
+
                                     <div class="checkbox-options-grid full-width">
                                         <label class="check-container">
                                             <input type="checkbox" id="optNoRecursive">
@@ -247,6 +220,56 @@
                                         </label>
                                     </div>
 
+                                    <!-- Append Extensions Section -->
+                                    <div class="form-group full-width">
+                                        <div class="collapsible-section">
+                                            <label class="check-container">
+                                                <input type="checkbox" id="enableExtensions">
+                                                <span class="checkmark"></span>
+                                                Append each word with this extension
+                                            </label>
+                                            <div class="collapsible-content" id="extensionsBlock" style="display:none;">
+                                                <div class="radio-group">
+                                                    <label class="radio-container">
+                                                        <input type="radio" name="extSource" id="extSourceInput"
+                                                            value="input" checked>
+                                                        <span class="radio-check"></span>
+                                                        Comma-separated list:
+                                                    </label>
+                                                    <input type="text" id="extensionsInput" placeholder="php,html,js"
+                                                        class="sub-input">
+                                                </div>
+                                                <div class="radio-group">
+                                                    <label class="radio-container">
+                                                        <input type="radio" name="extSource" id="extSourceFile"
+                                                            value="file">
+                                                        <span class="radio-check"></span>
+                                                        Select file from local filesystem:
+                                                    </label>
+                                                    <div class="input-browse-group sub-input-group">
+                                                        <input type="text" id="extensionsFilePath"
+                                                            placeholder="/path/to/extensions.txt" class="sub-input"
+                                                            disabled>
+                                                        <button type="button"
+                                                            class="btn btn-secondary btn-browse sub-btn"
+                                                            id="btnBrowseExtensions" data-target="extensionsFilePath"
+                                                            disabled>Browse</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Threads Slider -->
+                                    <div class="form-group full-width range-group">
+                                        <div class="range-labels">
+                                            <label for="threads">Concurrent Workers (Threads)</label>
+                                            <span class="range-val" id="threadsVal">20</span>
+                                        </div>
+                                        <input type="range" id="threads" min="1" max="150" value="20"
+                                            class="range-slider">
+                                    </div>
+
                                     <div class="form-row">
                                         <div class="form-group half">
                                             <label for="optVerbosity">Console Verbosity</label>
@@ -274,7 +297,8 @@
                                         <label for="optCertPath">Path to Client Certificate (.pem)</label>
                                         <div class="input-browse-group">
                                             <input type="text" id="optCertPath" placeholder="/home/kali/keys/cert.pem">
-                                            <button type="button" class="btn btn-secondary btn-browse" data-target="optCertPath">Browse</button>
+                                            <button type="button" class="btn btn-secondary btn-browse"
+                                                data-target="optCertPath">Browse</button>
                                         </div>
                                     </div>
                                     <div class="form-row">
@@ -290,8 +314,10 @@
                                     <div class="form-group full-width">
                                         <label for="optOutputFile">Save Scan Output File Path</label>
                                         <div class="input-browse-group">
-                                            <input type="text" id="optOutputFile" placeholder="/home/kali/scans/results.txt">
-                                            <button type="button" class="btn btn-secondary btn-browse" data-target="optOutputFile">Browse</button>
+                                            <input type="text" id="optOutputFile"
+                                                placeholder="/home/kali/scans/results.txt">
+                                            <button type="button" class="btn btn-secondary btn-browse"
+                                                data-target="optOutputFile">Browse</button>
                                         </div>
                                     </div>
                                 </div>
@@ -304,7 +330,7 @@
                             <button id="btnPause" class="btn btn-warning" disabled>Pause</button>
                             <button id="btnResume" class="btn btn-success" disabled>Resume</button>
                             <button id="btnStop" class="btn btn-danger" disabled>Stop</button>
-                            <button id="btnNext" class="btn btn-secondary" disabled>Next Directory</button>
+                            <!-- <button id="btnNext" class="btn btn-secondary" disabled>Next Directory</button> -->
                         </div>
                     </div>
 
@@ -314,7 +340,7 @@
                             <h3>Live Status Monitor</h3>
                             <span class="subtitle" id="statusMessage">Scan not started</span>
                         </div>
-                        
+
                         <div class="metrics-grid">
                             <div class="metric-card">
                                 <span class="title">Active Port</span>
@@ -390,7 +416,8 @@
                             </thead>
                             <tbody id="resultsTableBody">
                                 <tr>
-                                    <td colspan="6" class="empty-row">No paths discovered yet. Start scan to populate.</td>
+                                    <td colspan="6" class="empty-row">No paths discovered yet. Start scan to populate.
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>
@@ -404,7 +431,8 @@
                     <div class="card-header border-bottom graph-header-flex">
                         <div>
                             <h3>Hierarchical Directory Tree Map</h3>
-                            <span class="subtitle">Structured visualization of host folder paths. Zoom to inspect, drag nodes to organize.</span>
+                            <span class="subtitle">Structured visualization of host paths. Zoom to inspect, drag nodes
+                                to organize.</span>
                         </div>
                         <div class="graph-layout-controls">
                             <span class="ctrl-label">Layout Tree:</span>
@@ -422,7 +450,8 @@
                     <div class="visual-header-card glass">
                         <div class="card-header">
                             <h3>Active Endpoint Screenshots</h3>
-                            <span class="subtitle">Headless browser automatically screenshots active paths to gather visual evidence</span>
+                            <span class="subtitle">browser automatically screenshots active paths to gather visual
+                                pages</span>
                         </div>
                         <div class="visual-toggle-bar">
                             <label class="check-container">
@@ -433,11 +462,13 @@
                             <button id="btnCaptureSelected" class="btn btn-primary">Capture Selected Now</button>
                         </div>
                     </div>
-                    
+
                     <div class="metric-strip glass">
-                        <div class="strip-item"><span>Discovered Endpoints</span><strong id="visEndpointsCount">0</strong></div>
+                        <div class="strip-item"><span>Discovered Endpoints</span><strong
+                                id="visEndpointsCount">0</strong></div>
                         <div class="strip-item"><span>Screenshot Queue</span><strong id="visQueueCount">0</strong></div>
-                        <div class="strip-item"><span>Success Captures</span><strong id="visSuccessCount">0</strong></div>
+                        <div class="strip-item"><span>Success Captures</span><strong id="visSuccessCount">0</strong>
+                        </div>
                         <div class="strip-item"><span>Failed Captures</span><strong id="visFailedCount">0</strong></div>
                     </div>
                 </div>
@@ -445,7 +476,7 @@
                 <div class="screenshot-workspace">
                     <div class="queue-list-card glass">
                         <div class="card-header border-bottom">
-                            <h3>Evidence Collection Queue</h3>
+                            <h3>Pages Collection Queue</h3>
                         </div>
                         <div class="endpoint-list" id="visualQueueList">
                             <div class="empty-row-text">No active endpoints found yet.</div>
@@ -478,30 +509,33 @@
                                 Enable Autonomous AI Context Analysis
                             </label>
                         </div>
-                        
+
                         <div class="form-group half">
                             <label for="aiConfigBaseUrl">LLM Base Provider URL</label>
-                            <input type="text" id="aiConfigBaseUrl" placeholder="https://generativelanguage.googleapis.com/v1beta/openai/">
+                            <input type="text" id="aiConfigBaseUrl"
+                                placeholder="https://generativelanguage.googleapis.com/v1beta/openai/">
                         </div>
-                        
+
                         <div class="form-group half">
                             <label for="aiConfigModel">Model Identifier</label>
                             <input type="text" id="aiConfigModel" placeholder="gemini-2.5-flash">
                         </div>
-                        
+
                         <div class="form-group half">
                             <label for="aiConfigApiKey">Provider API Key</label>
                             <input type="password" id="aiConfigApiKey" placeholder="AIzaSy...">
                         </div>
-                        
+
                         <div class="form-group half">
                             <label for="aiConfigTemperature">Sampling Temperature</label>
                             <input type="number" id="aiConfigTemperature" min="0.0" max="1.0" step="0.1" value="0.3">
                         </div>
-                        
+
                         <div class="form-group full-width" style="margin-top: 10px;">
-                            <button type="submit" class="btn btn-primary" style="padding: 10px 24px; font-weight: bold;">Save AI Settings</button>
-                            <span id="aiConfigStatus" style="margin-left: 15px; font-weight: bold; font-size: 0.95rem;"></span>
+                            <button type="submit" class="btn btn-primary"
+                                style="padding: 10px 24px; font-weight: bold;">Save</button>
+                            <span id="aiConfigStatus"
+                                style="margin-left: 15px; font-weight: bold; font-size: 0.95rem;"></span>
                         </div>
                     </form>
                 </div>
@@ -521,7 +555,6 @@
                                     <th>Scan ID</th>
                                     <th>Target Host URL</th>
                                     <th>Wordlist Path</th>
-                                    <th>Threads</th>
                                     <th>Duration / Status</th>
                                     <th>Discovered Pages</th>
                                     <th>Actions</th>
@@ -529,7 +562,7 @@
                             </thead>
                             <tbody id="historyTableBody">
                                 <tr>
-                                    <td colspan="7" class="empty-row">No historical scans recorded.</td>
+                                    <td colspan="6" class="empty-row">No historical scans recorded.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -557,8 +590,12 @@
                     </ul>
                 </div>
             </div>
-            <div class="modal-footer border-top">
-                <input type="text" id="browserSelectedPath" readonly class="selected-path-input" placeholder="No file chosen">
+            <div class="modal-footer border-top" style="position: relative;">
+                <div class="selected-path-wrapper" style="position: relative; flex-grow: 1; display: flex; flex-direction: column;">
+                    <input type="text" id="browserSelectedPath" class="selected-path-input"
+                        placeholder="No file chosen" autocomplete="off">
+                    <div id="pathSuggestionsDropdown" class="suggestions-dropdown"></div>
+                </div>
                 <button id="btnBrowserSelect" class="btn btn-primary" disabled>Select File</button>
             </div>
         </div>
@@ -572,19 +609,27 @@
                 <span class="close-btn" id="closeDbLogs">&times;</span>
             </div>
             <div class="modal-body" style="max-height: 50vh; overflow-y: auto;">
-                <div class="modal-details-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; font-size: 0.9rem;">
-                    <div><strong>Target URL:</strong> <span id="dbLogsTarget" style="color: var(--text-highlight);"></span></div>
+                <div class="modal-details-grid"
+                    style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; font-size: 0.9rem;">
+                    <div><strong>Target URL:</strong> <span id="dbLogsTarget"
+                            style="color: var(--text-highlight);"></span></div>
                     <div><strong>Wordlist Path:</strong> <span id="dbLogsWordlist"></span></div>
                     <div><strong>Started At:</strong> <span id="dbLogsStart"></span></div>
                     <div><strong>Ended At:</strong> <span id="dbLogsEnd"></span></div>
-                    <div><strong>Total Requests:</strong> <span id="dbLogsRequests" style="color: var(--text-highlight);"></span></div>
+                    <div><strong>Total Requests:</strong> <span id="dbLogsRequests"
+                            style="color: var(--text-highlight);"></span></div>
                     <div><strong>Status:</strong> <span id="dbLogsStatus"></span></div>
                 </div>
-                <div class="modal-details-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; font-size: 0.85rem; padding: 10px; background: rgba(255, 255, 255, 0.03); border-radius: 6px; border: 1px solid var(--border-color);">
-                    <div><strong>Successful (2xx):</strong> <span id="dbLogsCount2xx" class="badge-2xx" style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
-                    <div><strong>Redirects (3xx):</strong> <span id="dbLogsCount3xx" class="badge-3xx" style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
-                    <div><strong>Client Errs (4xx):</strong> <span id="dbLogsCount4xx" class="badge-4xx" style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
-                    <div><strong>Server Errs (5xx):</strong> <span id="dbLogsCount5xx" class="badge-5xx" style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
+                <div class="modal-details-grid"
+                    style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; font-size: 0.85rem; padding: 10px; background: rgba(255, 255, 255, 0.03); border-radius: 6px; border: 1px solid var(--border-color);">
+                    <div><strong>Successful (2xx):</strong> <span id="dbLogsCount2xx" class="badge-2xx"
+                            style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
+                    <div><strong>Redirects (3xx):</strong> <span id="dbLogsCount3xx" class="badge-3xx"
+                            style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
+                    <div><strong>Client Errs (4xx):</strong> <span id="dbLogsCount4xx" class="badge-4xx"
+                            style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
+                    <div><strong>Server Errs (5xx):</strong> <span id="dbLogsCount5xx" class="badge-5xx"
+                            style="padding: 2px 6px; border-radius: 4px; font-weight: bold;">0</span></div>
                 </div>
                 <div class="table-container" style="border: 1px solid var(--border-color); border-radius: 8px;">
                     <table class="data-table" id="dbLogsTable">
@@ -615,4 +660,5 @@
     <script src="{{ url_for('static', filename='js/graph.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
+
 </html>

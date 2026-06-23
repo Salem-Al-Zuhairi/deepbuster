@@ -214,33 +214,8 @@ def run_scanner_loop(target_url, wordlist, kwargs, scan_id):
         # Write output file if requested
         output_file = kwargs.get('output_file')
         if output_file:
-            try:
-                out_dir = os.path.dirname(os.path.abspath(output_file))
-                if out_dir:
-                    os.makedirs(out_dir, exist_ok=True)
-                is_csv = output_file.lower().endswith('.csv')
-                with open(output_file, 'w+', encoding='utf-8', errors='ignore') as out:
-                    if is_csv:
-                        ESC_QUOTES = str.maketrans({'"': r'\"'})
-                        FIELDS = ['status_code', 'path', 'effective_url', 'headers']
-                        out.write(f'''{';'.join(FIELDS)}\n''')
-                        for r in active_scan.scanner.results:
-                            headers_str = ""
-                            if r.get('headers'):
-                                headers_str = ','.join([f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in r['headers']])
-                            out.write(f'''{r['status_code']};"{r['path'].translate(ESC_QUOTES)}";"{r.get('effective_url', '').translate(ESC_QUOTES)}";{headers_str}\n''')
-                    else:
-                        out.write("========================= RESULTS ==========================\n")
-                        alive = active_scan.scanner.alive()
-                        if len(alive) == 0:
-                            out.write("NOTHING FOUND 🧐\n")
-                        else:
-                            out.write(f"Found {len(alive)} accessible URL(s):\n")
-                            for d in alive:
-                                out.write(f"  [+] {target_url}{d['path']}\n")
-                        out.write("============================================================\n")
-            except Exception as write_err:
-                print(f"[!] Failed to write GUI scan output to file: {write_err}")
+            is_csv = output_file.lower().endswith('.csv')
+            save_output(output_file, active_scan.scanner.results, is_csv=is_csv, base_url=target_url)
     except asyncio.CancelledError:
         active_scan.status = "stopped"
         database.update_scan_status(scan_id, "stopped", datetime.now().isoformat())
@@ -303,39 +278,19 @@ def start_scan():
         return jsonify({"error": f"Failed to read wordlist: {str(e)}"}), 500
 
     # Parse headers text block
-    headers_dict = {}
-    headers_text = data.get("headers", "")
-    if headers_text:
-        for line in headers_text.splitlines():
-            if ":" in line:
-                k, v = line.split(":", 1)
-                headers_dict[k.strip()] = v.strip()
+    headers_dict = parse_headers(data.get("headers", ""))
 
     # Parse proxy
-    proxy_host = None
-    proxy_port = None
-    proxy_str = data.get("proxy", "")
-    if proxy_str:
-        if ":" in proxy_str:
-            proxy_host, proxy_port = proxy_str.split(":", 1)
-        else:
-            proxy_host = proxy_str
-            proxy_port = 1080
+    proxy_host, proxy_port = parse_proxy(data.get("proxy", ""))
 
     # Set up ignore code list
-    ignored_codes = [404]
-    if data.get("showNotFound", False):
-        ignored_codes = []
-    
-    ignore_code_str = data.get("ignoreCodes", "")
-    if ignore_code_str:
-        for code in ignore_code_str.split(','):
-            cleaned = code.strip()
-            if cleaned:
-                try:
-                    ignored_codes.append(int(cleaned))
-                except ValueError:
-                    pass
+    ignored_codes = parse_ignore_codes(data.get("ignoreCodes", ""))
+    if not data.get("showNotFound", False):
+        if 404 not in ignored_codes:
+            ignored_codes.append(404)
+    else:
+        if 404 in ignored_codes:
+            ignored_codes.remove(404)
 
     # Build credentials
     credentials = None
@@ -349,22 +304,18 @@ def start_scan():
     extensions_mode = data.get("extensionsMode", "")
     if extensions_mode == "input":
         ext_str = data.get("extensionsInput", "")
-        if ext_str:
-            probe_extensions = [("." + e.strip() if not e.strip().startswith(".") else e.strip()) for e in ext_str.split(",")]
+        probe_extensions = parse_extensions(ext_str)
     elif extensions_mode == "file":
         ext_file_path = data.get("extensionsFilePath", "")
         if ext_file_path and os.path.exists(ext_file_path):
             try:
                 with open(ext_file_path, "r") as ef:
-                    probe_extensions = [("." + line.strip() if not line.strip().startswith(".") else line.strip()) for line in ef if line.strip()]
+                    probe_extensions = parse_extensions([line.strip() for line in ef if line.strip()])
             except Exception as e:
                 print(f"[!] Extensions file reading error: {e}")
 
     # Build variations
-    probe_variations = []
-    variations_str = data.get("probeVariations") or data.get("variations", "")
-    if variations_str:
-        probe_variations = [v.strip() for v in variations_str.split(",") if v.strip()]
+    probe_variations = parse_variations(data.get("probeVariations") or data.get("variations", ""))
 
     # Extract additional settings
     follow_redirects = data.get("followRedirects", False)
@@ -428,6 +379,8 @@ def start_scan():
 @app.route("/api/scan/pause", methods=["POST"])
 def pause_scan():
     if active_scan.scanner and active_scan.loop:
+        if active_scan.loop.is_closed():
+            return jsonify({"error": "Scan has already completed or stopped"}), 400
         active_scan.loop.call_soon_threadsafe(active_scan.scanner.pause_event.clear)
         active_scan.status = "paused"
         database.update_scan_status(active_scan.scan_id, "paused")
@@ -437,6 +390,8 @@ def pause_scan():
 @app.route("/api/scan/resume", methods=["POST"])
 def resume_scan():
     if active_scan.scanner and active_scan.loop:
+        if active_scan.loop.is_closed():
+            return jsonify({"error": "Scan has already completed or stopped"}), 400
         active_scan.loop.call_soon_threadsafe(active_scan.scanner.pause_event.set)
         active_scan.status = "running"
         database.update_scan_status(active_scan.scan_id, "running")
@@ -446,6 +401,9 @@ def resume_scan():
 @app.route("/api/scan/stop", methods=["POST"])
 def stop_scan():
     if active_scan.scanner and active_scan.loop:
+        if active_scan.loop.is_closed():
+            active_scan.status = "stopped"
+            return jsonify({"status": "stopped"})
         def stop_coro():
             active_scan.scanner.current_state = "stopped"
             # Drain queue items
@@ -478,6 +436,8 @@ def stop_scan():
 @app.route("/api/scan/next-directory", methods=["POST"])
 def next_directory():
     if active_scan.scanner and active_scan.loop:
+        if active_scan.loop.is_closed():
+            return jsonify({"error": "Scan has already completed or stopped"}), 400
         # Run next directory filter coroutine thread-safely in background event loop
         fut = asyncio.run_coroutine_threadsafe(
             active_scan.scanner.skip_current_directory(),
@@ -536,6 +496,21 @@ def browse_directory():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/api/validate-file", methods=["GET"])
+def validate_file():
+    path = request.args.get("path", "")
+    if not path:
+        return jsonify({"valid": False, "reason": "Empty path"}), 200
+    
+    path = os.path.abspath(path)
+    exists = os.path.exists(path)
+    is_file = os.path.isfile(path)
+    return jsonify({
+        "valid": exists and is_file,
+        "exists": exists,
+        "is_file": is_file
+    })
 
 @app.route("/api/scan/status", methods=["GET"])
 def get_scan_status():

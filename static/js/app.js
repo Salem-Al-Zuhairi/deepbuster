@@ -9,19 +9,51 @@ document.addEventListener("DOMContentLoaded", () => {
     const navButtons = document.querySelectorAll(".nav-btn");
     const tabPanels = document.querySelectorAll(".tab-panel");
 
+    const tabContexts = {
+        scan: {
+            title: "Scan Workspace",
+            subtitle: "Configure directives and execute intelligence discovery"
+        },
+        graph: {
+            title: "Network Topology Map",
+            subtitle: "Real-time visual path mapping and node relationship graph"
+        },
+        visual: {
+            title: "Visual Capture Evidence",
+            subtitle: "Automated browser screenshots queue and rendering pipeline"
+        },
+        history: {
+            title: "Scan History & Database Logs",
+            subtitle: "Audit previous executions, findings, and metadata history"
+        },
+        evasion: {
+            title: "Settings & Configuration",
+            subtitle: "Fine-tune evasive request configurations and API connection options"
+        }
+    };
+
     navButtons.forEach(btn => {
         btn.addEventListener("click", () => {
             const targetTab = btn.getAttribute("data-tab");
-            
+
             navButtons.forEach(b => b.classList.remove("active"));
             tabPanels.forEach(p => p.classList.remove("active"));
-            
+
             btn.classList.add("active");
             const activePanel = document.getElementById(`tab-${targetTab}`);
             if (activePanel) {
                 activePanel.classList.add("active");
             }
-            
+
+            // Update top header dynamically based on active tab context
+            const context = tabContexts[targetTab];
+            if (context) {
+                const headerTitle = document.getElementById("headerTitle");
+                const headerSubtitle = document.getElementById("headerSubtitle");
+                if (headerTitle) headerTitle.textContent = context.title;
+                if (headerSubtitle) headerSubtitle.textContent = context.subtitle;
+            }
+
             // Trigger Vis graph canvas redraw if active
             if (targetTab === 'graph' && window.liveGraph && window.liveGraph.network) {
                 setTimeout(() => {
@@ -81,7 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const wordlistPathInput = document.getElementById("wordlistPath");
     const threadsInput = document.getElementById("threads");
     const threadsVal = document.getElementById("threadsVal");
-    
+
     // Sliders displays
     if (threadsInput && threadsVal) {
         threadsInput.addEventListener("input", () => {
@@ -95,39 +127,28 @@ document.addEventListener("DOMContentLoaded", () => {
     if (wordlistCategorySelect && wordlistPathInput) {
         wordlistCategorySelect.addEventListener("change", () => {
             const category = wordlistCategorySelect.value;
-            let path = "";
-            
-            // Adjust label text
-            if (wordlistPathLabel) {
-                if (category === "url") {
+            const btnBrowse = document.querySelector(".btn-browse");
+
+            // Adjust label text, placeholder, and browse button visibility dynamically
+            if (category === "url") {
+                if (wordlistPathLabel) {
                     wordlistPathLabel.textContent = "Wordlist URL";
-                } else {
+                }
+                wordlistPathInput.placeholder = "http://example.com/wordlist.txt";
+                if (btnBrowse) {
+                    btnBrowse.style.display = "none";
+                }
+            } else {
+                if (wordlistPathLabel) {
                     wordlistPathLabel.textContent = "Full File Path";
                 }
-            }
-
-            if (category === "common") {
-                path = "/usr/share/wordlists/dirb/common.txt";
-            } else if (category === "directories") {
-                path = "/usr/share/wordlists/dirb/big.txt";
-            } else if (category === "files") {
-                path = "/usr/share/wordlists/dirb/small.txt";
-            } else if (category === "ai") {
-                try {
-                    const urlVal = targetUrlInput ? targetUrlInput.value.trim() : "";
-                    const hostname = urlVal ? new URL(urlVal).hostname : "0.0.0.0";
-                    path = `/home/kali/deepbuster/${hostname}_ai_wordlist.txt`;
-                } catch(e) {
-                    path = "/home/kali/deepbuster/ai_generated_wordlist.txt";
+                wordlistPathInput.placeholder = "/home/kali/mylist.txt";
+                if (btnBrowse) {
+                    btnBrowse.style.display = "";
                 }
-            } else if (category === "url") {
-                path = "http://127.0.0.1:8001/wordlists/common.txt";
-            } else if (category === "custom") {
-                path = "/home/kali/deepbuster/mylist.txt";
             }
-            if (path) {
-                wordlistPathInput.value = path;
-            }
+            // Clear the input value so the placeholder is visible
+            wordlistPathInput.value = "";
         });
     }
 
@@ -136,7 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const btnPause = document.getElementById("btnPause");
     const btnResume = document.getElementById("btnResume");
     const btnStop = document.getElementById("btnStop");
-    const btnNext = document.getElementById("btnNext");
+    // const btnNext = document.getElementById("btnNext");
 
     // Stat displays
     const statRequests = document.getElementById("statRequests");
@@ -151,6 +172,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const count3xx = document.getElementById("count3xx");
     const count4xx = document.getElementById("count4xx");
     const count5xx = document.getElementById("count5xx");
+
+    const statusIndicator = document.getElementById("statusIndicator");
+    const statusIndicatorText = document.getElementById("statusIndicatorText");
+
+    function setEngineStatus(status, text) {
+        if (!statusIndicator) return;
+        statusIndicator.className = "indicator " + status;
+        if (statusIndicatorText) {
+            statusIndicatorText.textContent = text;
+        }
+    }
 
     // Live state mapping
     let pollInterval = null;
@@ -221,7 +253,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (statDirectory) statDirectory.textContent = "/";
                 if (progressBarFill) progressBarFill.style.width = "0%";
                 if (progressPercent) progressPercent.textContent = "0%";
-                
+
                 if (count2xx) count2xx.textContent = "0";
                 if (count3xx) count3xx.textContent = "0";
                 if (count4xx) count4xx.textContent = "0";
@@ -236,23 +268,29 @@ document.addEventListener("DOMContentLoaded", () => {
                     body: JSON.stringify(payload)
                 });
                 const data = await response.json();
-                
+
                 if (data.error) {
                     alert(data.error);
                     return;
                 }
 
                 currentScanId = data.scan_id;
-                
+
+                // Update UI State
+                document.title = `Scanning: ${payload.targetUrl}`;
+                const pageSubtitle = document.getElementById("pageSubtitle");
+                if (pageSubtitle) pageSubtitle.textContent = `Scanning: ${payload.targetUrl}`;
+
                 // Toggle action button states
                 btnStart.disabled = true;
                 btnPause.disabled = false;
                 btnResume.disabled = true;
                 btnStop.disabled = false;
-                btnNext.disabled = false;
-                
+                // btnNext.disabled = false;
+
                 statusMessage.textContent = "Scan running...";
-                
+                setEngineStatus("yellow", "Scanning...");
+
                 // Start status poll interval loop
                 if (pollInterval) clearInterval(pollInterval);
                 pollInterval = setInterval(pollState, 1000);
@@ -272,6 +310,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnPause.disabled = true;
                 btnResume.disabled = false;
                 statusMessage.textContent = "Scan paused";
+                setEngineStatus("yellow", "Scan Paused");
                 if (window.synth) window.synth.playError();
             }
         });
@@ -286,6 +325,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 btnPause.disabled = false;
                 btnResume.disabled = true;
                 statusMessage.textContent = "Scan running...";
+                setEngineStatus("yellow", "Scanning...");
                 if (window.synth) window.synth.playStart();
             }
         });
@@ -297,14 +337,17 @@ document.addEventListener("DOMContentLoaded", () => {
             const resp = await fetch("/api/scan/stop", { method: "POST" });
             const data = await resp.json();
             if (data.status === "stopped") {
+
+
                 btnStart.disabled = false;
                 btnPause.disabled = true;
                 btnResume.disabled = true;
                 btnStop.disabled = true;
-                btnNext.disabled = true;
+                // btnNext.disabled = true;
                 statusMessage.textContent = "Scan stopped by user";
+                setEngineStatus("red", "Engine Stopped");
                 if (window.synth) window.synth.playError();
-                
+
                 // Stop poller interval
                 if (pollInterval) clearInterval(pollInterval);
                 loadHistory();
@@ -313,15 +356,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Skip Directory Control Trigger
-    if (btnNext) {
-        btnNext.addEventListener("click", async () => {
-            const resp = await fetch("/api/scan/next-directory", { method: "POST" });
-            const data = await resp.json();
-            if (data.status === "success") {
-                statusMessage.textContent = `Skipped dir ${data.skipped_directory} (${data.count} items)`;
-            }
-        });
-    }
+    // if (btnNext) {
+    //     btnNext.addEventListener("click", async () => {
+    //         const resp = await fetch("/api/scan/next-directory", { method: "POST" });
+    //         const data = await resp.json();
+    //         if (data.status === "success") {
+    //             statusMessage.textContent = `Skipped dir ${data.skipped_directory} (${data.count} items)`;
+    //         }
+    //     });
+    // }
 
     // Update Status Polling Function
     async function pollState() {
@@ -331,7 +374,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (state.status === "idle") {
                 if (pollInterval) clearInterval(pollInterval);
+                setEngineStatus("green", "Engine Idle");
                 return;
+            }
+
+            // Sync sidebar status
+            if (state.status === "running") {
+                setEngineStatus("yellow", "Scanning...");
+            } else if (state.status === "paused") {
+                setEngineStatus("yellow", "Scan Paused");
             }
 
             // Sync metrics display
@@ -339,6 +390,8 @@ document.addEventListener("DOMContentLoaded", () => {
             statQueue.textContent = state.queue_size;
             statDirectory.textContent = state.current_directory || "/";
             aiStatusText.textContent = state.ai_status;
+
+
 
             count2xx.textContent = state.counts[2] || 0;
             count3xx.textContent = state.counts[3] || 0;
@@ -356,18 +409,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (state.status === "completed" || state.status === "stopped" || state.status === "error") {
                 clearInterval(pollInterval);
+
+
+
                 btnStart.disabled = false;
                 btnPause.disabled = true;
                 btnResume.disabled = true;
                 btnStop.disabled = true;
-                btnNext.disabled = true;
+                // btnNext.disabled = true;
                 statusMessage.textContent = `Scan ${state.status.toUpperCase()}`;
-                
+                if (state.status === "completed") {
+                    setEngineStatus("green", "Engine Idle");
+                } else {
+                    setEngineStatus("red", `Engine ${state.status.toUpperCase()}`);
+                }
+
                 if (window.synth) {
                     if (state.status === "completed") window.synth.playComplete();
                     else window.synth.playError();
                 }
-                
+
                 // Refresh final logs history view
                 loadHistory();
             }
@@ -382,19 +443,19 @@ document.addEventListener("DOMContentLoaded", () => {
             const resp = await fetch("/api/scan/results");
             const list = await resp.json();
             const tbody = document.getElementById("resultsTableBody");
-            
+
             let html = "";
             let newFindDetected = false;
 
             list.forEach(item => {
                 const family = Math.floor(item.status_code / 100);
                 const badgeClass = `badge-${family}xx`;
-                
+
                 // Graph mapping check
                 if (!knownPaths.has(item.path)) {
                     knownPaths.add(item.path);
                     newFindDetected = true;
-                    
+
                     if (window.liveGraph) {
                         window.liveGraph.addPath(item.path, item.status_code);
                     }
@@ -410,9 +471,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
 
                 const isEligibleForCapture = item.status_code >= 200 && item.status_code < 400;
-                const actionButton = isEligibleForCapture 
+                const captureBtn = isEligibleForCapture
                     ? `<button class="btn btn-secondary sub-input" onclick="captureSinglePath('${item.path}')">Capture</button>`
                     : `<span style="color: var(--text-muted); font-style: italic;">N/A</span>`;
+
+                // Build full URL for the visit button
+                let visitUrl = targetUrlInput.value.trim();
+                if (visitUrl && !visitUrl.endsWith('/')) visitUrl += '/';
+                let cleanVisitPath = item.path;
+                if (cleanVisitPath.startsWith('/')) cleanVisitPath = cleanVisitPath.substring(1);
+                const fullVisitUrl = visitUrl + cleanVisitPath;
 
                 html += `
                     <tr>
@@ -421,7 +489,10 @@ document.addEventListener("DOMContentLoaded", () => {
                         <td><strong>${item.path}</strong></td>
                         <td>${formatBytes(item.response_size)}</td>
                         <td>${formatTimestamp(item.timestamp)}</td>
-                        <td>${actionButton}</td>
+                        <td style="display:flex;gap:6px;align-items:center;">
+                            <a href="${fullVisitUrl}" target="_blank" class="btn btn-primary sub-input" style="font-size:0.78rem;padding:4px 8px;text-decoration:none;">Visit</a>
+                            ${captureBtn}
+                        </td>
                     </tr>
                 `;
             });
@@ -442,13 +513,13 @@ document.addEventListener("DOMContentLoaded", () => {
     function addVisualQueueRow(path, statusCode, screenshotPath = null) {
         const queueList = document.getElementById("visualQueueList");
         if (!queueList) return;
-        
+
         // Remove empty placeholders
         const emptyPl = queueList.querySelector(".empty-row-text");
         if (emptyPl) emptyPl.remove();
 
         const rowId = `vrow_${path.replace(/\//g, '_').replace(/\./g, '_')}`;
-        
+
         let existing = document.getElementById(rowId);
         if (existing) {
             if (screenshotPath) {
@@ -464,7 +535,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const div = document.createElement("div");
         div.id = rowId;
         div.className = "endpoint-item";
-        
+
         if (screenshotPath) {
             div.innerHTML = `
                 <div class="endpoint-meta">
@@ -474,10 +545,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 <span class="endpoint-status success" id="status_${rowId}">Captured</span>
             `;
             queueList.appendChild(div);
-            
+
             // Also append directly to gallery
             appendGalleryCard(path, screenshotPath, false);
-            
+
             // Update success counter
             const activeCount = document.getElementById("visEndpointsCount");
             const visSuccessCount = document.getElementById("visSuccessCount");
@@ -532,7 +603,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 })
             });
             const data = await resp.json();
-            
+
             if (data.error) {
                 if (statusSpan) {
                     statusSpan.className = "endpoint-status failed";
@@ -546,7 +617,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     statusSpan.textContent = "Captured";
                 }
                 if (visSuccessCount) visSuccessCount.textContent = parseInt(visSuccessCount.textContent || 0) + 1;
-                
+
                 // Poll check target file until generated successfully to display preview
                 pollScreenshotReady(path);
             }
@@ -574,7 +645,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (err) {
                 console.error("Poller screenshot error:", err);
             }
-            
+
             if (attempts >= maxAttempts) {
                 clearInterval(check);
                 appendGalleryCard(path, null, true);
@@ -582,20 +653,35 @@ document.addEventListener("DOMContentLoaded", () => {
         }, 1000);
     }
 
+    // Track gallery paths to prevent duplicate gallery cards
+    const galleryPaths = new Set();
+
     // Render screenshot gallery image card elements
     function appendGalleryCard(path, imageUrl, isFailed) {
         const gallery = document.getElementById("screenshotGallery");
         if (!gallery) return;
+
+        // Prevent duplicate gallery cards for the same path
+        if (galleryPaths.has(path)) return;
+        galleryPaths.add(path);
+
         const empty = gallery.querySelector(".empty-row-text");
         if (empty) empty.remove();
 
+        // Build full URL for visit button
+        let baseUrl = targetUrlInput.value.trim();
+        if (baseUrl && !baseUrl.endsWith('/')) baseUrl += '/';
+        let cleanPath = path;
+        if (cleanPath.startsWith('/')) cleanPath = cleanPath.substring(1);
+        const fullPageUrl = baseUrl + cleanPath;
+
         const card = document.createElement("div");
         card.className = "evidence-card";
-        
+
         let previewHtml = `<div class="evidence-preview"><div class="fallback">Assessment Failed</div></div>`;
         if (!isFailed && imageUrl) {
             previewHtml = `
-                <div class="evidence-preview">
+                <div class="evidence-preview" style="cursor:pointer;" data-full-img="${imageUrl}" data-page-url="${fullPageUrl}">
                     <img src="${imageUrl}" alt="Capture preview" onerror="this.style.display='none'">
                 </div>
             `;
@@ -605,10 +691,58 @@ document.addEventListener("DOMContentLoaded", () => {
             ${previewHtml}
             <div class="evidence-info">
                 <span class="evidence-path">${path}</span>
-                <span class="evidence-time">${new Date().toLocaleTimeString()}</span>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="evidence-time">${new Date().toLocaleTimeString()}</span>
+                    <a href="${fullPageUrl}" target="_blank" class="btn btn-primary" style="font-size:0.7rem;padding:3px 8px;text-decoration:none;">Visit Page</a>
+                </div>
             </div>
         `;
+
+        // Lightbox click on image preview
+        const preview = card.querySelector('.evidence-preview[data-full-img]');
+        if (preview) {
+            preview.addEventListener('click', () => {
+                openLightbox(preview.getAttribute('data-full-img'), preview.getAttribute('data-page-url'), path);
+            });
+        }
+
         gallery.appendChild(card);
+    }
+
+    // Lightbox modal for enlarged screenshots
+    function openLightbox(imgSrc, pageUrl, path) {
+        let overlay = document.getElementById('galleryLightbox');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'galleryLightbox';
+            overlay.className = 'lightbox-overlay';
+            document.body.appendChild(overlay);
+
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove('open');
+                }
+            });
+        }
+
+        overlay.innerHTML = `
+            <div class="lightbox-content">
+                <span class="lightbox-close">&times;</span>
+                <img src="${imgSrc}" alt="${path}">
+                <div class="lightbox-footer">
+                    <span class="lightbox-path">${path}</span>
+                    <a href="${pageUrl}" target="_blank" class="btn btn-primary" style="font-size:0.85rem;padding:6px 16px;text-decoration:none;">Visit Page</a>
+                </div>
+            </div>
+        `;
+
+        overlay.querySelector('.lightbox-close').addEventListener('click', () => {
+            overlay.classList.remove('open');
+        });
+
+        // Force reflow then open for animation
+        void overlay.offsetWidth;
+        overlay.classList.add('open');
     }
 
     // Setup single path capture action
@@ -617,7 +751,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const rowId = `vrow_${path.replace(/\//g, '_').replace(/\./g, '_')}`;
         addVisualQueueRow(path, 200); // default status code since we are capturing it
         triggerVisualAssessment(path, rowId);
-        
+
         // Switch to the gallery tab to show results
         const visTabBtn = document.querySelector('.nav-btn[data-tab="visual"]');
         if (visTabBtn) visTabBtn.click();
@@ -667,6 +801,165 @@ document.addEventListener("DOMContentLoaded", () => {
     const browserSelectedPath = document.getElementById("browserSelectedPath");
     const btnBrowserSelect = document.getElementById("btnBrowserSelect");
 
+    const suggestionsDropdown = document.getElementById("pathSuggestionsDropdown");
+    let activeSuggestionIndex = -1;
+    let suggestionsList = [];
+
+    // Validation function (checks if it's a file, not a directory, and exists)
+    let validationTimeout = null;
+    function validateSelectedPath(path) {
+        if (validationTimeout) clearTimeout(validationTimeout);
+        if (!path) {
+            btnBrowserSelect.disabled = true;
+            return;
+        }
+        validationTimeout = setTimeout(async () => {
+            try {
+                const resp = await fetch(`/api/validate-file?path=${encodeURIComponent(path)}`);
+                const data = await resp.json();
+                btnBrowserSelect.disabled = !data.valid;
+            } catch (e) {
+                btnBrowserSelect.disabled = true;
+            }
+        }, 300);
+    }
+
+    // Autocomplete / suggestions logic when user types
+    let autocompleteTimeout = null;
+    if (browserSelectedPath) {
+        browserSelectedPath.addEventListener("input", () => {
+            const val = browserSelectedPath.value;
+            validateSelectedPath(val.trim());
+
+            if (autocompleteTimeout) clearTimeout(autocompleteTimeout);
+            
+            if (!val.trim()) {
+                closeSuggestions();
+                return;
+            }
+
+            autocompleteTimeout = setTimeout(async () => {
+                let dir = "";
+                let prefix = "";
+                const lastSlash = val.lastIndexOf("/");
+                if (lastSlash !== -1) {
+                    dir = val.substring(0, lastSlash) || "/";
+                    prefix = val.substring(lastSlash + 1);
+                } else {
+                    dir = ""; // current directory
+                    prefix = val;
+                }
+
+                try {
+                    const resp = await fetch(`/api/browse?path=${encodeURIComponent(dir)}`);
+                    const data = await resp.json();
+                    
+                    if (data.error || !data.items) {
+                        closeSuggestions();
+                        return;
+                    }
+
+                    // Filter files AND directories matching prefix (case-insensitive), skip '..'
+                    suggestionsList = data.items.filter(item => 
+                        item.name !== ".." &&
+                        item.name.toLowerCase().startsWith(prefix.toLowerCase())
+                    );
+
+                    if (suggestionsList.length > 0) {
+                        renderSuggestions();
+                    } else {
+                        closeSuggestions();
+                    }
+                } catch (err) {
+                    console.error("Autocomplete fetch error:", err);
+                    closeSuggestions();
+                }
+            }, 150);
+        });
+
+        // Keyboard navigation for autocomplete list
+        browserSelectedPath.addEventListener("keydown", (e) => {
+            if (!suggestionsDropdown || !suggestionsDropdown.classList.contains("open")) return;
+
+            const items = suggestionsDropdown.querySelectorAll(".suggestion-item");
+            if (items.length === 0) return;
+
+            if (e.key === "ArrowDown") {
+                e.preventDefault();
+                activeSuggestionIndex = (activeSuggestionIndex + 1) % items.length;
+                updateActiveSuggestion(items);
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                activeSuggestionIndex = (activeSuggestionIndex - 1 + items.length) % items.length;
+                updateActiveSuggestion(items);
+            } else if (e.key === "Enter") {
+                e.preventDefault();
+                if (activeSuggestionIndex >= 0 && activeSuggestionIndex < items.length) {
+                    items[activeSuggestionIndex].click();
+                }
+            } else if (e.key === "Escape") {
+                closeSuggestions();
+            }
+        });
+    }
+
+    function renderSuggestions() {
+        if (!suggestionsDropdown) return;
+        suggestionsDropdown.innerHTML = "";
+        activeSuggestionIndex = -1;
+
+        suggestionsList.forEach((item, index) => {
+            const div = document.createElement("div");
+            div.className = "suggestion-item";
+            const icon = item.is_dir ? "📁" : "📄";
+            div.innerHTML = `<span class="icon">${icon}</span> <span class="name">${item.name}</span>`;
+            
+            div.addEventListener("click", () => {
+                if (item.is_dir) {
+                    // Navigate into the directory: set path with trailing slash and re-trigger input
+                    browserSelectedPath.value = item.path + "/";
+                    closeSuggestions();
+                    browserSelectedPath.focus();
+                    browserSelectedPath.dispatchEvent(new Event("input"));
+                } else {
+                    browserSelectedPath.value = item.path;
+                    closeSuggestions();
+                    btnBrowserSelect.disabled = false;
+                    browserSelectedPath.focus();
+                }
+            });
+
+            suggestionsDropdown.appendChild(div);
+        });
+
+        suggestionsDropdown.classList.add("open");
+    }
+
+    function updateActiveSuggestion(items) {
+        items.forEach(item => item.classList.remove("active"));
+        if (activeSuggestionIndex >= 0 && activeSuggestionIndex < items.length) {
+            items[activeSuggestionIndex].classList.add("active");
+            // Scroll into view if needed
+            items[activeSuggestionIndex].scrollIntoView({ block: "nearest" });
+        }
+    }
+
+    function closeSuggestions() {
+        if (suggestionsDropdown) {
+            suggestionsDropdown.classList.remove("open");
+            suggestionsDropdown.innerHTML = "";
+        }
+        activeSuggestionIndex = -1;
+        suggestionsList = [];
+    }
+
+    // Close suggestions when clicking outside
+    document.addEventListener("click", (e) => {
+        if (suggestionsDropdown && !suggestionsDropdown.contains(e.target) && e.target !== browserSelectedPath) {
+            closeSuggestions();
+        }
+    });
+
     let currentBrowsingPath = "";
     let activeInputTargetId = null;
 
@@ -698,7 +991,7 @@ document.addEventListener("DOMContentLoaded", () => {
         fileBrowserModal.classList.add("open");
         browserSelectedPath.value = "";
         btnBrowserSelect.disabled = true;
-        
+
         let targetDir = "";
         if (path) {
             // If it's a file path, get parent directory
@@ -715,48 +1008,48 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             browserCurrentPath.textContent = "Loading...";
             fileList.innerHTML = "<li class='file-item'>Loading directory contents...</li>";
-            
+
             const url = `/api/browse?path=${encodeURIComponent(path)}`;
             const resp = await fetch(url);
             const data = await resp.json();
-            
+
             if (data.error) {
                 fileList.innerHTML = `<li class='file-item' style='color:#ff4d5e;'>Error: ${data.error}</li>`;
                 return;
             }
-            
+
             currentBrowsingPath = data.current_path;
             browserCurrentPath.textContent = currentBrowsingPath;
             fileList.innerHTML = "";
-            
+
             if (data.items.length === 0) {
                 fileList.innerHTML = "<li class='file-item' style='color:#576580; font-style:italic;'>Directory is empty</li>";
                 return;
             }
-            
+
             data.items.forEach(item => {
                 // If it is '..', we might skip since we have the UP button, but it's fine to display
-                if (item.name === "..") return; 
-                
+                if (item.name === "..") return;
+
                 const li = document.createElement("li");
                 li.className = "file-item";
                 li.setAttribute("data-path", item.path);
                 li.setAttribute("data-dir", item.is_dir ? "true" : "false");
-                
+
                 const icon = item.is_dir ? "📁" : "📄";
                 li.innerHTML = `<span class="icon">${icon}</span> <span class="name">${item.name}</span>`;
-                
+
                 // Single click selects item
                 li.addEventListener("click", (e) => {
                     e.stopPropagation();
                     document.querySelectorAll(".file-item").forEach(el => el.classList.remove("selected"));
                     li.classList.add("selected");
-                    
+
                     browserSelectedPath.value = item.path;
-                    // Only enable select button if it's a file (or either, user choice, but usually files for wordlist/certs)
-                    btnBrowserSelect.disabled = false;
+                    // Disable select button if it's a directory (only allow selecting files)
+                    btnBrowserSelect.disabled = item.is_dir;
                 });
-                
+
                 // Double click folders to navigate inside
                 if (item.is_dir) {
                     li.addEventListener("dblclick", (e) => {
@@ -764,7 +1057,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         fetchDirectory(item.path);
                     });
                 }
-                
+
                 fileList.appendChild(li);
             });
         } catch (e) {
@@ -806,10 +1099,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const resp = await fetch("/api/scan/history");
             const historyList = await resp.json();
             const tbody = document.getElementById("historyTableBody");
-            
+
             if (!tbody) return;
             if (historyList.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="7" class="empty-row">No historical scans recorded.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="empty-row">No historical scans recorded.</td></tr>`;
                 return;
             }
 
@@ -821,7 +1114,6 @@ document.addEventListener("DOMContentLoaded", () => {
                         <td><strong>#${scan.id}</strong></td>
                         <td><a href="${scan.target_url}" target="_blank" class="range-val">${scan.target_url}</a></td>
                         <td><small>${scan.wordlist_path}</small></td>
-                        <td>${scan.threads}</td>
                         <td>
                             <div class="system-status">
                                 <span class="indicator ${scan.status === 'completed' ? 'green' : 'yellow'}"></span>
@@ -863,7 +1155,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const rowId = `vrow_${path.replace(/\//g, '_').replace(/\./g, '_')}`;
         addVisualQueueRow(path, 200);
         triggerVisualAssessment(path, rowId);
-        
+
         // Switch to Visual Tab
         const btn = document.querySelector('[data-tab="visual"]');
         if (btn) btn.click();
@@ -949,7 +1241,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const closeDbLogs = document.getElementById("closeDbLogs");
     const btnCloseDbLogsFooter = document.getElementById("btnCloseDbLogsFooter");
     const btnExportDbLogsCSV = document.getElementById("btnExportDbLogsCSV");
-    
+
     let activeLogScan = null;
     let activeLogResults = [];
 
@@ -973,7 +1265,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
             activeLogScan = scan;
-            
+
             document.getElementById("dbLogsTarget").textContent = scan.target_url;
             document.getElementById("dbLogsWordlist").textContent = scan.wordlist_path;
             document.getElementById("dbLogsStart").textContent = formatTimestamp(scan.start_time);
@@ -981,37 +1273,37 @@ document.addEventListener("DOMContentLoaded", () => {
             document.getElementById("dbLogsRequests").textContent = scan.total_requests;
             document.getElementById("dbLogsStatus").textContent = scan.status.toUpperCase();
             document.getElementById("dbLogsTitle").textContent = `Scan Run #${scan.id} Summary`;
-            
+
             // Populate response family stats
             document.getElementById("dbLogsCount2xx").textContent = scan.count_200 || 0;
             document.getElementById("dbLogsCount3xx").textContent = scan.count_300 || 0;
             document.getElementById("dbLogsCount4xx").textContent = scan.count_400 || 0;
             document.getElementById("dbLogsCount5xx").textContent = scan.count_500 || 0;
-            
+
             const tbody = document.getElementById("dbLogsTableBody");
             tbody.innerHTML = `<tr><td colspan="5" class="empty-row">Loading logs results...</td></tr>`;
-            
+
             dbLogsModal.classList.add("open");
-            
+
             const resp = await fetch(`/api/scan/${scan.id}/results`);
             const results = await resp.json();
             activeLogResults = results;
-            
+
             if (results.length === 0) {
                 tbody.innerHTML = `<tr><td colspan="5" class="empty-row">No discovered paths recorded for this scan.</td></tr>`;
                 return;
             }
-            
+
             let html = "";
             results.forEach(item => {
                 const family = Math.floor(item.status_code / 100);
                 const badgeClass = `badge-${family}xx`;
-                
+
                 let actionHtml = `<span style="color: var(--text-muted); font-style: italic;">None</span>`;
                 if (item.screenshot_path) {
                     actionHtml = `<a class="btn btn-secondary btn-sm" style="font-size:0.8rem; padding: 4px 8px;" href="${item.screenshot_path}" target="_blank">👁️ View Screenshot</a>`;
                 }
-                
+
                 html += `
                     <tr>
                         <td><span class="status-badge ${badgeClass}">${item.status_code}</span></td>
@@ -1035,28 +1327,72 @@ document.addEventListener("DOMContentLoaded", () => {
                 alert("No results data to export.");
                 return;
             }
-            let csvContent = "data:text/csv;charset=utf-8,";
-            csvContent += "Status Code,Method,Path,Size,Timestamp,Screenshot Path\r\n";
-            
+            let csvContent = "Status Code,Method,Path,Full URL,Size (KB),Timestamp,Screenshot URL\r\n";
+
             activeLogResults.forEach(item => {
+                // 1. Full URL path of the page
+                let baseUrl = activeLogScan.target_url || "";
+                if (baseUrl && !baseUrl.endsWith('/')) {
+                    baseUrl += '/';
+                }
+                let cleanPath = item.path || "";
+                if (cleanPath.startsWith('/')) {
+                    cleanPath = cleanPath.substring(1);
+                }
+                const fullUrl = baseUrl + cleanPath;
+
+                // 2. Size in KB
+                const sizeKb = (item.response_size / 1024).toFixed(2);
+
+                // 3. Formatted timestamp (YYYY-MM-DD HH:MM:SS)
+                let formattedTime = "";
+                if (item.timestamp) {
+                    const date = new Date(item.timestamp);
+                    const YYYY = date.getFullYear();
+                    const MM = String(date.getMonth() + 1).padStart(2, '0');
+                    const DD = String(date.getDate()).padStart(2, '0');
+                    const hh = String(date.getHours()).padStart(2, '0');
+                    const mm = String(date.getMinutes()).padStart(2, '0');
+                    const ss = String(date.getSeconds()).padStart(2, '0');
+                    formattedTime = `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+                }
+
+                // 4. Full image path
+                let fullScreenshotPath = "";
+                if (item.screenshot_path) {
+                    if (item.screenshot_path.startsWith('http://') || item.screenshot_path.startsWith('https://')) {
+                        fullScreenshotPath = item.screenshot_path;
+                    } else {
+                        let baseOrigin = window.location.origin;
+                        let sPath = item.screenshot_path;
+                        if (!sPath.startsWith('/')) {
+                            sPath = '/' + sPath;
+                        }
+                        fullScreenshotPath = baseOrigin + sPath;
+                    }
+                }
+
                 const row = [
                     item.status_code,
                     "GET",
                     `"${item.path.replace(/"/g, '""')}"`,
-                    item.response_size,
-                    `"${item.timestamp}"`,
-                    `"${item.screenshot_path || ''}"`
+                    `"${fullUrl.replace(/"/g, '""')}"`,
+                    sizeKb,
+                    `"${formattedTime}"`,
+                    `"${fullScreenshotPath.replace(/"/g, '""')}"`
                 ];
                 csvContent += row.join(",") + "\r\n";
             });
-            
-            const encodedUri = encodeURI(csvContent);
+
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `scan_${activeLogScan.id}_results.csv`);
+            link.setAttribute("href", url);
+            link.setAttribute("download", `deepbuster_scan_${activeLogScan.id}_results.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            URL.revokeObjectURL(url);
         });
     }
 

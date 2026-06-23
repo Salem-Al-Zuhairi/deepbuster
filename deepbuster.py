@@ -7,7 +7,7 @@ import uuid
 import ssl
 from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
-from typing import Iterable, Any
+from typing import Iterable, Any, Callable, Awaitable
 import urllib.parse
 from ai_engine import DeepbusterAIEngine
 import os
@@ -153,9 +153,9 @@ def save_output(output_file, results, is_csv=False, base_url=""):
         print(f"[!] Failed to write output file: {e}")
 
 class Deepbuster:
-    found_callback: Any
-    error_callback: Any
-    pre_fetch_callback: Any
+    found_callback: Callable[..., Awaitable[Any]] | None
+    error_callback: Callable[..., Awaitable[Any]] | None
+    pre_fetch_callback: Callable[..., Awaitable[Any]] | None
 
     def __init__(self, base_url: str, **kwargs) -> None:
         self.base_url = base_url

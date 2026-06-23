@@ -73,6 +73,24 @@ class LiveGraph {
         };
 
         this.network = new vis.Network(this.container, data, options);
+
+        // Double-click node to visit the page in a new tab
+        this.network.on('doubleClick', (params) => {
+            if (params.nodes && params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                if (nodeId === 'root') return;
+
+                // Extract path from nodeId: 'node_some/path' -> '/some/path'
+                const path = nodeId.replace(/^node_/, '');
+                const targetInput = document.getElementById('targetUrl');
+                if (!targetInput) return;
+
+                let base = targetInput.value.trim();
+                if (base && !base.endsWith('/')) base += '/';
+                const fullUrl = base + path;
+                window.open(fullUrl, '_blank');
+            }
+        });
     }
 
     setDirection(direction) {
