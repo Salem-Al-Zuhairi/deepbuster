@@ -769,7 +769,12 @@ textarea:focus {
 .stats-panel {
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    justify-content: flex-start;
+    gap: 16px;
+    align-self: start;
+    position: sticky;
+    top: 24px;
+    height: fit-content;
 }
 
 .metrics-grid {
