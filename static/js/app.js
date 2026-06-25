@@ -166,6 +166,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const progressBarFill = document.getElementById("progressBarFill");
     const progressPercent = document.getElementById("progressPercent");
     const aiStatusText = document.getElementById("aiStatusText");
+    const aiWordsText = document.getElementById("aiWordsText");
     const statusMessage = document.getElementById("statusMessage");
 
     const count2xx = document.getElementById("count2xx");
@@ -182,6 +183,21 @@ document.addEventListener("DOMContentLoaded", () => {
         if (statusIndicatorText) {
             statusIndicatorText.textContent = text;
         }
+    }
+
+    // Disabling/enabling Custom User Agent input when Rotate UAs is checked
+    const optRotateUserAgents = document.getElementById("optRotateUserAgents");
+    const optUserAgent = document.getElementById("optUserAgent");
+    if (optRotateUserAgents && optUserAgent) {
+        optRotateUserAgents.addEventListener("change", () => {
+            optUserAgent.disabled = optRotateUserAgents.checked;
+            if (optRotateUserAgents.checked) {
+                optUserAgent.value = "";
+                optUserAgent.placeholder = "User-Agent Rotation Active";
+            } else {
+                optUserAgent.placeholder = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...";
+            }
+        });
     }
 
     // Live state mapping
@@ -216,7 +232,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 followRedirects: document.getElementById("optFollowRedirects").checked,
                 fineTune404: document.getElementById("optFineTune404").checked,
                 usePathAsIs: document.getElementById("optUsePathAsIs").checked,
-                probeVariations: document.getElementById("optProbeVariations").value.trim() || null
+                rotateUserAgents: document.getElementById("optRotateUserAgents").checked,
+                autoPause: document.getElementById("optAutoPause").checked,
+                probeVariations: document.getElementById("optProbeVariations").value.trim() || null,
+                insecure: document.getElementById("optInsecure").checked
             };
 
             // Build extension params if checked
@@ -245,6 +264,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 // Reset numerical displays to zero
                 if (statRequests) statRequests.textContent = "0";
+                if (aiWordsText) aiWordsText.textContent = "0";
                 if (statQueue) statQueue.textContent = "0 / 0";
                 if (statDirectory) statDirectory.textContent = "/";
                 if (progressBarFill) progressBarFill.style.width = "0%";
@@ -374,11 +394,27 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            // Sync sidebar status
+            // Sync sidebar status and controls
             if (state.status === "running") {
                 setEngineStatus("yellow", "Scanning...");
+                if (btnStart) btnStart.disabled = true;
+                if (btnPause) btnPause.disabled = false;
+                if (btnResume) btnResume.disabled = true;
+                if (btnStop) btnStop.disabled = false;
             } else if (state.status === "paused") {
                 setEngineStatus("yellow", "Scan Paused");
+                if (btnStart) btnStart.disabled = true;
+                if (btnPause) btnPause.disabled = true;
+                if (btnResume) btnResume.disabled = false;
+                if (btnStop) btnStop.disabled = false;
+                if (statusMessage) {
+                    if (state.paused_reason === "waf_block") {
+                        statusMessage.innerHTML = `<span style="color: #ff4d5e; font-weight: bold;">[WAF Block Detected]</span> Scan paused automatically due to consecutive 403/429 errors.`;
+                        setEngineStatus("red", "WAF Blocked");
+                    } else {
+                        statusMessage.textContent = "Scan paused";
+                    }
+                }
             }
 
             // Sync metrics display
@@ -386,6 +422,7 @@ document.addEventListener("DOMContentLoaded", () => {
             statQueue.textContent = state.queue_size;
             statDirectory.textContent = state.current_directory || "/";
             aiStatusText.textContent = state.ai_status;
+            if (aiWordsText) aiWordsText.textContent = state.ai_words_generated || 0;
 
 
 
@@ -492,6 +529,10 @@ document.addEventListener("DOMContentLoaded", () => {
                     </tr>
                 `;
             });
+
+            if (newFindDetected && window.liveGraph) {
+                window.liveGraph.applyFilter(window.liveGraph.activeFilter);
+            }
 
             if (list.length > 0 && tbody) {
                 tbody.innerHTML = html;
@@ -812,6 +853,29 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    // Live Graph status filter controls
+    const filterButtons = {
+        'all': document.getElementById("btnFilterAll"),
+        '2xx': document.getElementById("btnFilter2xx"),
+        '3xx': document.getElementById("btnFilter3xx"),
+        '4xx': document.getElementById("btnFilter4xx"),
+        '5xx': document.getElementById("btnFilter5xx")
+    };
+
+    Object.entries(filterButtons).forEach(([key, btn]) => {
+        if (btn) {
+            btn.addEventListener("click", () => {
+                Object.values(filterButtons).forEach(b => {
+                    if (b) b.classList.remove("active");
+                });
+                btn.classList.add("active");
+                if (window.liveGraph) {
+                    window.liveGraph.applyFilter(key);
+                }
+            });
+        }
+    });
+
     // ============================================
     // Local File Dialog Browser Handler
     // ============================================
@@ -835,9 +899,10 @@ document.addEventListener("DOMContentLoaded", () => {
             btnBrowserSelect.disabled = true;
             return;
         }
+        const allowNew = (activeInputTargetId === "optOutputFile");
         validationTimeout = setTimeout(async () => {
             try {
-                const resp = await fetch(`/api/validate-file?path=${encodeURIComponent(path)}`);
+                const resp = await fetch(`/api/validate-file?path=${encodeURIComponent(path)}&allow_new=${allowNew}`);
                 const data = await resp.json();
                 btnBrowserSelect.disabled = !data.valid;
             } catch (e) {

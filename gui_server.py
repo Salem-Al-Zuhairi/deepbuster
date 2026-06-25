@@ -38,6 +38,7 @@ class ActiveScan:
         self.results = []
         self.counts = {2: 0, 3: 0, 4: 0, 5: 0}
         self.total_requests = 0
+        self.ai_words_generated = 0
 
     def reset(self, scan_id, target_url):
         with self.lock:
@@ -52,6 +53,7 @@ class ActiveScan:
             self.results = []
             self.counts = {2: 0, 3: 0, 4: 0, 5: 0}
             self.total_requests = 0
+            self.ai_words_generated = 0
 
 active_scan = ActiveScan()
 
@@ -139,6 +141,9 @@ def run_scanner_loop(target_url, wordlist, kwargs, scan_id):
     async def pre_fetch_hook(path: str) -> None:
         # Keep track of total request count
         active_scan.total_requests = active_scan.scanner.total_requests
+        if not active_scan.scanner.pause_event.is_set() and active_scan.status == "running":
+            active_scan.status = "paused"
+            database.update_scan_status(scan_id, "paused")
     
     async def found_hook(path: str, status_code: int, size: int) -> None:
         active_scan.total_requests = active_scan.scanner.total_requests
@@ -400,6 +405,10 @@ def start_scan():
         "follow_redirects": follow_redirects,
         "fine_tune_404": fine_tune_404,
         "use_path_as_is": use_path_as_is,
+        "rotate_user_agents": data.get("rotateUserAgents", False),
+        "auto_pause": data.get("autoPause", True),
+        "validate_cert": not data.get("insecure", False),
+        "is_gui": True,
         "quiet": False,
         "output_file": output_file
     }
@@ -441,6 +450,9 @@ def resume_scan():
         if active_scan.loop.is_closed():
             return jsonify({"error": "Scan has already completed or stopped"}), 400
         active_scan.loop.call_soon_threadsafe(active_scan.scanner.pause_event.set)
+        active_scan.scanner.paused_reason = None
+        active_scan.scanner.consecutive_waf_blocks = 0
+        active_scan.scanner.current_state = "running"
         active_scan.status = "running"
         database.update_scan_status(active_scan.scan_id, "running")
         return jsonify({"status": "running"})
@@ -548,14 +560,22 @@ def browse_directory():
 @app.route("/api/validate-file", methods=["GET"])
 def validate_file():
     path = request.args.get("path", "")
+    allow_new = request.args.get("allow_new", "false").lower() == "true"
     if not path:
         return jsonify({"valid": False, "reason": "Empty path"}), 200
     
     path = os.path.abspath(path)
     exists = os.path.exists(path)
     is_file = os.path.isfile(path)
+    
+    valid = (exists and is_file)
+    if not exists and allow_new:
+        parent_dir = os.path.dirname(path)
+        if os.path.exists(parent_dir) and os.path.isdir(parent_dir):
+            valid = True
+            
     return jsonify({
-        "valid": exists and is_file,
+        "valid": valid,
         "exists": exists,
         "is_file": is_file
     })
@@ -568,17 +588,23 @@ def get_scan_status():
     snapshot = {}
     if active_scan.scanner:
         snapshot = active_scan.scanner.get_progress_snapshot()
+        active_scan.ai_words_generated = snapshot.get("ai_words_generated", 0)
+        if snapshot.get("is_paused", False) and active_scan.status == "running":
+            active_scan.status = "paused"
+            database.update_scan_status(active_scan.scan_id, "paused")
 
     return jsonify({
         "scan_id": active_scan.scan_id,
         "status": active_scan.status,
         "target_url": active_scan.target_url,
         "total_requests": active_scan.total_requests,
+        "ai_words_generated": active_scan.ai_words_generated,
         "counts": active_scan.counts,
         "queue_size": snapshot.get("queue_size", 0),
         "ai_status": snapshot.get("ai_status", "Inactive"),
         "ai_tasks_count": snapshot.get("ai_tasks_count", 0),
         "results_count": len(active_scan.results),
+        "paused_reason": snapshot.get("paused_reason", None),
         "current_directory": active_scan.scanner.get_current_scanning_directory() if active_scan.scanner else "/"
     })
 

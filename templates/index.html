@@ -135,16 +135,27 @@
                             </button>
                             <div class="accordion-panel" id="accordionPanel">
                                 <div class="advanced-settings-grid">
-                                    <div class="form-group">
-                                        <label for="optUserAgent">Custom User Agent</label>
-                                        <input type="text" id="optUserAgent"
-                                            placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="optCookies">Cookies Data</label>
-                                        <input type="text" id="optCookies"
-                                            placeholder="PHPSESSID=abcdef12345; security=low">
-                                    </div>
+                                     <div class="form-group full-width">
+                                         <div class="user-agent-container" style="display: flex; align-items: flex-end; gap: 16px; width: 100%;">
+                                             <div style="flex-grow: 1;">
+                                                 <label for="optUserAgent">Custom User Agent</label>
+                                                 <input type="text" id="optUserAgent"
+                                                     placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...">
+                                             </div>
+                                             <div style="margin-bottom: 8px;">
+                                                 <label class="check-container" style="margin-bottom: 0;">
+                                                     <input type="checkbox" id="optRotateUserAgents">
+                                                     <span class="checkmark"></span>
+                                                     Rotate UAs
+                                                 </label>
+                                             </div>
+                                         </div>
+                                     </div>
+                                     <div class="form-group full-width">
+                                         <label for="optCookies">Cookies Data</label>
+                                         <input type="text" id="optCookies"
+                                             placeholder="PHPSESSID=abcdef12345; security=low">
+                                     </div>
                                     <div class="form-group full-width">
                                         <label for="optHeaders">Custom HTTP Headers (one per line)</label>
                                         <textarea id="optHeaders" rows="3"
@@ -200,6 +211,16 @@
                                             <input type="checkbox" id="optUsePathAsIs">
                                             <span class="checkmark"></span>
                                             Use Path As-Is
+                                        </label>
+                                        <label class="check-container">
+                                            <input type="checkbox" id="optAutoPause" checked>
+                                            <span class="checkmark"></span>
+                                            Auto-Pause on WAF Block
+                                        </label>
+                                        <label class="check-container">
+                                            <input type="checkbox" id="optInsecure">
+                                            <span class="checkmark"></span>
+                                            Ignore SSL Verification (Insecure)
                                         </label>
                                     </div>
 
@@ -343,9 +364,13 @@
                             </div>
                         </div>
 
-                        <div class="log-banner" id="logBanner">
+                        <div class="log-banner" id="logBanner" style="margin-bottom: 10px;">
                             <span class="label">AI reasoning queue:</span>
                             <span class="text" id="aiStatusText">Inactive</span>
+                        </div>
+                        <div class="log-banner" id="aiWordCountBanner" style="margin-top: 0px; margin-bottom: 20px;">
+                            <span class="label">AI Words Generated:</span>
+                            <span class="text" id="aiWordsText">0</span>
                         </div>
 
                         <div class="findings-summary">
@@ -408,6 +433,15 @@
                                 to organize.</span>
                         </div>
                         <div class="graph-layout-controls">
+                            <span class="ctrl-label">Filter HTTP Codes:</span>
+                            <button class="btn btn-sm btn-secondary active" id="btnFilterAll">All</button>
+                            <button class="btn btn-sm btn-secondary" id="btnFilter2xx">2xx</button>
+                            <button class="btn btn-sm btn-secondary" id="btnFilter3xx">3xx</button>
+                            <button class="btn btn-sm btn-secondary" id="btnFilter4xx">4xx</button>
+                            <button class="btn btn-sm btn-secondary" id="btnFilter5xx">5xx</button>
+                            
+                            <span style="color: var(--border-color); margin: 0 5px; opacity: 0.5;">|</span>
+                            
                             <span class="ctrl-label">Layout Tree:</span>
                             <button class="btn btn-sm btn-secondary active" id="btnTreeLR">Left-to-Right</button>
                             <button class="btn btn-sm btn-secondary" id="btnTreeUD">Top-to-Bottom</button>

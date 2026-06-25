@@ -12,6 +12,7 @@ class LiveGraph {
         this.knownNodes = new Set();
         this.knownEdges = new Set();
         this.currentDirection = 'LR';
+        this.activeFilter = 'all';
     }
 
     init(direction = 'LR') {
@@ -103,6 +104,21 @@ class LiveGraph {
         this.edges.clear();
         this.knownNodes.clear();
         this.knownEdges.clear();
+        this.activeFilter = 'all';
+        const btnAll = document.getElementById("btnFilterAll");
+        if (btnAll) {
+            const filterBtns = ["btnFilterAll", "btnFilter2xx", "btnFilter3xx", "btnFilter4xx", "btnFilter5xx"];
+            filterBtns.forEach(id => {
+                const btn = document.getElementById(id);
+                if (btn) {
+                    if (id === "btnFilterAll") {
+                        btn.classList.add("active");
+                    } else {
+                        btn.classList.remove("active");
+                    }
+                }
+            });
+        }
     }
 
     addPath(path, statusCode) {
@@ -169,9 +185,40 @@ class LiveGraph {
                     id: nodeId,
                     label: '/' + segment,
                     color: nodeColor,
-                    title: `Path: /${currentPath}` + (isLast && statusCode ? ` (HTTP ${statusCode})` : '')
+                    title: `Path: /${currentPath}` + (isLast && statusCode ? ` (HTTP ${statusCode})` : ''),
+                    statusCode: isLast ? statusCode : null,
+                    isLast: isLast
                 });
                 this.knownNodes.add(nodeId);
+            } else if (isLast && statusCode) {
+                // Node already exists, but now we have a status code for it! Update it.
+                let nodeColor = {
+                    background: '#0b1020',
+                    border: '#8b9bb4',
+                    highlight: { background: '#0b1020', border: '#00ff99' }
+                };
+                const family = Math.floor(statusCode / 100);
+                if (family === 2) {
+                    nodeColor.border = '#00ff99';
+                    nodeColor.background = '#061a12';
+                } else if (family === 3) {
+                    nodeColor.border = '#ffd34d';
+                    nodeColor.background = '#1a180e';
+                } else if (family === 4) {
+                    nodeColor.border = '#ff9800';
+                    nodeColor.background = '#1a1206';
+                } else if (family === 5) {
+                    nodeColor.border = '#ff4d5e';
+                    nodeColor.background = '#1a090b';
+                }
+
+                this.nodes.update({
+                    id: nodeId,
+                    color: nodeColor,
+                    title: `Path: /${currentPath} (HTTP ${statusCode})`,
+                    statusCode: statusCode,
+                    isLast: true
+                });
             }
 
             // Create Edge
@@ -186,6 +233,75 @@ class LiveGraph {
             }
 
             parentId = nodeId;
+        }
+    }
+
+    applyFilter(filterType) {
+        this.activeFilter = filterType; // 'all', '2xx', '3xx', '4xx', '5xx'
+        
+        // 1. Determine which nodes match the filter
+        const allNodes = this.nodes.get();
+        const visibleNodes = new Set();
+        
+        // Root is always visible
+        visibleNodes.add('root');
+        
+        // Identify directly matching nodes
+        allNodes.forEach(node => {
+            if (node.id === 'root') return;
+            
+            let isMatch = false;
+            if (filterType === 'all') {
+                isMatch = true;
+            } else {
+                const targetFamily = parseInt(filterType.charAt(0)); // 2, 3, 4, or 5
+                if (node.statusCode) {
+                    const family = Math.floor(node.statusCode / 100);
+                    if (family === targetFamily) {
+                        isMatch = true;
+                    }
+                }
+            }
+            
+            if (isMatch) {
+                visibleNodes.add(node.id);
+                
+                // Add all parent/ancestor node IDs of this visible node
+                if (node.id.startsWith('node_')) {
+                    const cleanPath = node.id.replace(/^node_/, '');
+                    const segments = cleanPath.split('/');
+                    let ancestorPath = '';
+                    for (let i = 0; i < segments.length - 1; i++) {
+                        ancestorPath += (ancestorPath ? '/' : '') + segments[i];
+                        visibleNodes.add('node_' + ancestorPath);
+                    }
+                }
+            }
+        });
+        
+        // 2. Update nodes hidden status
+        const nodesUpdate = [];
+        allNodes.forEach(node => {
+            const shouldBeHidden = !visibleNodes.has(node.id);
+            if (node.hidden !== shouldBeHidden) {
+                nodesUpdate.push({ id: node.id, hidden: shouldBeHidden });
+            }
+        });
+        if (nodesUpdate.length > 0) {
+            this.nodes.update(nodesUpdate);
+        }
+        
+        // 3. Update edges hidden status
+        const allEdges = this.edges.get();
+        const edgesUpdate = [];
+        allEdges.forEach(edge => {
+            const shouldBeHidden = !visibleNodes.has(edge.from) || !visibleNodes.has(edge.to);
+            if (edge.hidden !== shouldBeHidden) {
+                edgesUpdate.push({ id: edge.id, hidden: shouldBeHidden });
+            }
+        });
+        if (edgesUpdate.length > 0) {
+            this.edges.update(edgesUpdate);
         }
     }
 }
