@@ -1,9 +1,28 @@
-Pipfile.lock
-*.txt
-*.csv
-*.log
-.antigravity/*
-__pycache__/*
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Configuration & Secrets
 .env
 config.json
-.antigravitycli/*
+
+# Databases & History
+*.db
+*.sqlite3
+
+# Logs & Output files
+*.log
+*.csv
+*.txt
+!requirements.txt
+
+# Screenshots & Static temp files
+static/screenshots/
+
+# IDEs and System files
+.antigravity/
+.antigravitycli/
+.vscode/
+.idea/
+.DS_Store

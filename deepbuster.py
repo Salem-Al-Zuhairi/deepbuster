@@ -7,12 +7,185 @@ import uuid
 import ssl
 from tornado.httpclient import AsyncHTTPClient, HTTPClientError, HTTPRequest
 import asyncio
-from typing import Iterable
+from typing import Iterable, Any, Callable, Awaitable
+import urllib.parse
 from ai_engine import DeepbusterAIEngine
+import os
+from datetime import datetime
+
+def parse_headers(headers_input):
+    headers_dict = {}
+    if not headers_input:
+        return headers_dict
+    
+    if isinstance(headers_input, list):
+        for header in headers_input:
+            if ':' in header:
+                k, v = header.split(':', 1)
+                headers_dict[k.strip()] = v.strip()
+    elif isinstance(headers_input, dict):
+        for k, v in headers_input.items():
+            headers_dict[str(k).strip()] = str(v).strip()
+    elif isinstance(headers_input, str):
+        for line in headers_input.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                headers_dict[k.strip()] = v.strip()
+    return headers_dict
+
+def parse_proxy(proxy_input):
+    if not proxy_input:
+        return None, None
+    if isinstance(proxy_input, str):
+        proxy_input = proxy_input.strip()
+        if not proxy_input:
+            return None, None
+        if ":" in proxy_input:
+            host, port = proxy_input.split(":", 1)
+            try:
+                return host.strip(), int(port.strip())
+            except ValueError:
+                return host.strip(), 1080
+        return proxy_input, 1080
+    return None, None
+
+def parse_ignore_codes(ignore_input):
+    ignored_codes = [404]
+    if not ignore_input:
+        return ignored_codes
+    
+    if isinstance(ignore_input, list):
+        ignored_codes = []
+        for item in ignore_input:
+            if isinstance(item, int):
+                ignored_codes.append(item)
+            elif isinstance(item, str):
+                for code in item.split(','):
+                    cleaned = code.strip()
+                    if cleaned:
+                        try:
+                            ignored_codes.append(int(cleaned))
+                        except ValueError:
+                            pass
+    elif isinstance(ignore_input, str):
+        ignored_codes = []
+        for code in ignore_input.split(','):
+            cleaned = code.strip()
+            if cleaned:
+                try:
+                    ignored_codes.append(int(cleaned))
+                except ValueError:
+                    pass
+    elif isinstance(ignore_input, (int, float)):
+        ignored_codes = [int(ignore_input)]
+    return ignored_codes
+
+def parse_extensions(ext_input):
+    probe_extensions = []
+    if not ext_input:
+        return probe_extensions
+    
+    if isinstance(ext_input, list):
+        for item in ext_input:
+            item_str = str(item).strip()
+            if item_str:
+                if not item_str.startswith('.'):
+                    item_str = '.' + item_str
+                probe_extensions.append(item_str)
+    elif isinstance(ext_input, str):
+        for ext in ext_input.split(','):
+            cleaned = ext.strip()
+            if cleaned:
+                if not cleaned.startswith('.'):
+                    cleaned = '.' + cleaned
+                probe_extensions.append(cleaned)
+    return probe_extensions
+
+def parse_variations(var_input):
+    probe_variations = []
+    if not var_input:
+        return probe_variations
+    
+    if isinstance(var_input, list):
+        for item in var_input:
+            item_str = str(item).strip()
+            if item_str:
+                probe_variations.append(item_str)
+    elif isinstance(var_input, str):
+        for var in var_input.split(','):
+            cleaned = var.strip()
+            if cleaned:
+                probe_variations.append(cleaned)
+    return probe_variations
+
+def save_output(output_file, results, is_csv=False, base_url=""):
+    try:
+        out_dir = os.path.dirname(os.path.abspath(output_file))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+    except Exception as e:
+        print(f"[!] Failed to create output directory: {e}")
+
+    try:
+        with open(output_file, 'w+', encoding='utf-8', errors='ignore') as output:
+            if is_csv:
+                ESC_QUOTES = str.maketrans({'"': r'\"'})
+                FIELDS = ['status_code', 'path', 'response_size', 'effective_url', 'headers']
+                output.write(f'''{';'.join(FIELDS)}\n''')
+                for result in results:
+                    headers_str = ""
+                    if result.get('headers'):
+                        if isinstance(result['headers'], dict):
+                            headers_str = ','.join([f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers'].items()])
+                        else:
+                            headers_str = ','.join([f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers']])
+                    output.write(f'''{result['status_code']};"{result['path'].translate(ESC_QUOTES)}";{result.get('response_size', 0)};"{result.get('effective_url', '').translate(ESC_QUOTES)}";{headers_str}\n''')
+            else:
+                output.write("========================= RESULTS ==========================\n")
+                alive = [r for r in results if r['status_code'] == 200]
+                if len(alive) == 0:
+                    output.write("NOTHING FOUND 🧐\n")
+                else:
+                    output.write(f"Found {len(alive)} accessible URL(s):\n")
+                    for d in alive:
+                        size_val = d.get('response_size', 0)
+                        if size_val < 1024:
+                            size_str = f"{size_val} B"
+                        elif size_val < 1024 * 1024:
+                            size_str = f"{size_val / 1024:.2f} KB"
+                        else:
+                            size_str = f"{size_val / (1024 * 1024):.2f} MB"
+                        output.write(f"  [+] {base_url}{d['path']} (Size: {size_str})\n")
+                output.write("============================================================\n")
+    except Exception as e:
+        print(f"[!] Failed to write output file: {e}")
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.1; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0"
+]
 
 class Deepbuster:
+    found_callback: Callable[..., Awaitable[Any]] | None
+    error_callback: Callable[..., Awaitable[Any]] | None
+    pre_fetch_callback: Callable[..., Awaitable[Any]] | None
+
     def __init__(self, base_url: str, **kwargs) -> None:
         self.base_url = base_url
+        self.rotate_user_agents = kwargs.get('rotate_user_agents', False)
+        self.auto_pause = kwargs.get('auto_pause', True)
+        self.validate_cert = kwargs.get('validate_cert', True)
+        self.is_gui = kwargs.get('is_gui', False)
+        self.consecutive_waf_blocks = 0
+        self.waf_block_threshold = 20
+        self.paused_reason = None
         self.found_callback = kwargs.get('found_callback', None)
         self.error_callback = kwargs.get('error_callback', None)
         self.pre_fetch_callback = kwargs.get('pre_fetch_callback', None)
@@ -22,7 +195,7 @@ class Deepbuster:
         self.dont_stop_on_warning = kwargs.get('dont_stop_on_warning', False)
         self.ignore_case = kwargs.get('ignore_case', False)
         self.delay = kwargs.get('delay', 0)
-        self.ignored_codes = set(kwargs.get('ignored_codes', []))
+        self.ignored_codes = set(parse_ignore_codes(kwargs.get('ignored_codes', [])))
         self.use_path_as_is = kwargs.get('use_path_as_is', False)
         self.fine_tune_404 = kwargs.get('fine_tune_404', False)
         self.custom_404_lengths = set()
@@ -37,15 +210,16 @@ class Deepbuster:
             else:
                 self.ssl_ctx.load_cert_chain(certfile=cert_arg.strip())
         self.recursive = kwargs.get('recursive', True)
-        self.interactive_recursive = kwargs.get('interactive_recursive', False)
         self.scanned_directories = set(['/'])
-        self.input_lock = asyncio.Lock()
+        self.print_lock = asyncio.Lock()
         self.wordlist = []
         self.ai_enabled = kwargs.get('ai_enabled', False)
         self.ai_engine = None
         self.ai_tasks = set()
         self.ai_unchecked_words = []
         self.current_ai_status = "Inactive"
+        self.ai_words_generated = 0
+        self.ai_generated_words_list = []
         
         if self.ai_enabled:
             from urllib.parse import urlparse
@@ -68,33 +242,80 @@ class Deepbuster:
             else:
                 self.ai_unchecked_words = self.ai_engine.load_state_unchecked_words()
                 self.current_ai_status = "Initialized"
-        self.probe_extensions = kwargs.get('probe_extensions', [])
-        self.probe_variations = kwargs.get('probe_variations', [])
+        self.probe_extensions = parse_extensions(kwargs.get('probe_extensions', []))
+        self.probe_variations = parse_variations(kwargs.get('probe_variations', []))
         self.cookie = kwargs.get('cookie', None) or kwargs.get('cookies', None)
-        headers = kwargs.get('headers', None)
-        self.headers = {}
-        if isinstance(headers, list):
-            for header in headers:
-                if ':' in header:
-                    k, v = header.split(':', 1)
-                    self.headers[k.strip()] = v.strip()
-        elif isinstance(headers, dict):
-            self.headers = headers
+        self.headers = parse_headers(kwargs.get('headers', None))
         credentials = kwargs.get('credentials', None)
         self.auth_user_name, self.auth_password = credentials.split(':', 1) \
             if isinstance(credentials, str) else (None, None)
         self.queue = asyncio.Queue()
         self.num_workers = kwargs.get('num_workers', 10)
         self.results = []
+        
+        # Concurrency, control, and state management
+        self.pause_event = asyncio.Event()
+        self.pause_event.set()
+        self.total_requests = 0
+        self.current_state = "running"
+        self.visited_paths = set()
+        
+        # Proxy configuration
+        self.proxy_host = kwargs.get('proxy_host', None)
+        self.proxy_port = kwargs.get('proxy_port', None)
+        if self.proxy_host and not self.proxy_port and ':' in self.proxy_host:
+            self.proxy_host, self.proxy_port = parse_proxy(self.proxy_host)
+        if self.proxy_port is not None:
+            try:
+                self.proxy_port = int(self.proxy_port)
+            except ValueError:
+                self.proxy_port = None
+        self.proxy_username = kwargs.get('proxy_username', None)
+        self.proxy_password = kwargs.get('proxy_password', None)
+
+    def track_response_code(self, code: int) -> None:
+        if not self.auto_pause:
+            return
+        if code in [403, 429]:
+            self.consecutive_waf_blocks += 1
+            if self.consecutive_waf_blocks >= self.waf_block_threshold:
+                if self.current_state != "paused":
+                    self.current_state = "paused"
+                    self.paused_reason = "waf_block"
+                    self.pause_event.clear()
+                    
+                    is_gui = getattr(self, 'is_gui', False)
+                    if not is_gui:
+                        asyncio.create_task(self.safe_print(
+                            f"\n\u001b[31;1m[!] WAF Block Detected! (Received {self.consecutive_waf_blocks} consecutive {code} responses). Scanning paused automatically.\u001b[0m\n"
+                        ))
+                        asyncio.create_task(self.wait_for_resume())
+                    else:
+                        asyncio.create_task(self.safe_print(
+                            f"\n\u001b[31;1m[!] WAF Block Detected! (Received {self.consecutive_waf_blocks} consecutive {code} responses). Scanning paused automatically.\u001b[0m\n"
+                            f"\u001b[33m[i] You can resume the scan from the Web GUI.\u001b[0m\n"
+                        ))
+        else:
+            self.consecutive_waf_blocks = 0
+
+    async def wait_for_resume(self):
+        await self.safe_print("\u001b[33m[i] Press [Enter] to resume the scan...\u001b[0m")
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sys.stdin.readline)
+        self.consecutive_waf_blocks = 0
+        self.paused_reason = None
+        self.current_state = "running"
+        self.pause_event.set()
+        await self.safe_print("\u001b[32;1m[+] Resuming scan...\u001b[0m")
 
     async def check_wildcard(self) -> bool:
         # Generate two completely unique, dynamic, and random nonexistent paths
-        p1 = f"/deepbuster_{uuid.uuid4().hex}"
-        p2 = f"/deepbuster_{uuid.uuid4().hex}_{uuid.uuid4().hex}"
+        p1 = f"/{uuid.uuid4().hex}"
+        p2 = f"/{uuid.uuid4().hex}_{uuid.uuid4().hex}"
         
         has_wildcard = False
         try:
-            http_client = AsyncHTTPClient()
+            http_client = self.http_client
             headers = dict(self.headers) if self.headers else {}
             if self.cookie:
                 headers['Cookie'] = self.cookie
@@ -106,7 +327,12 @@ class Deepbuster:
                                auth_username=self.auth_user_name,
                                auth_password=self.auth_password,
                                follow_redirects=self.follow_redirects,
-                               ssl_options=self.ssl_ctx)
+                               ssl_options=self.ssl_ctx,
+                               validate_cert=self.validate_cert,
+                               proxy_host=self.proxy_host,
+                               proxy_port=self.proxy_port,
+                               proxy_username=self.proxy_username,
+                               proxy_password=self.proxy_password)
             r1 = await http_client.fetch(req1)
             
             if r1.code == 200:
@@ -115,7 +341,7 @@ class Deepbuster:
                     self.custom_404_lengths.add(len(r1.body))
                     # Save the normalized base size (subtracting path length) in case the path is reflected in the HTML
                     self.custom_404_base_sizes.add(len(r1.body) - len(p1))
-
+ 
                 # Fetch the second random path to detect dynamic/reflected soft 404s
                 req2 = HTTPRequest(f"{self.base_url}{p2}",
                                    user_agent=self.user_agent,
@@ -123,7 +349,12 @@ class Deepbuster:
                                    auth_username=self.auth_user_name,
                                    auth_password=self.auth_password,
                                    follow_redirects=self.follow_redirects,
-                                   ssl_options=self.ssl_ctx)
+                                   ssl_options=self.ssl_ctx,
+                                   validate_cert=self.validate_cert,
+                                   proxy_host=self.proxy_host,
+                                   proxy_port=self.proxy_port,
+                                   proxy_username=self.proxy_username,
+                                   proxy_password=self.proxy_password)
                 r2 = await http_client.fetch(req2)
                 if r2.code == 200:
                     if self.fine_tune_404:
@@ -132,7 +363,7 @@ class Deepbuster:
         except Exception:
             pass
         return has_wildcard
-
+ 
     async def trigger_ai_analysis(self, path, response_headers=None, response_body=None):
         if not self.ai_enabled or not self.ai_engine:
             return
@@ -141,7 +372,7 @@ class Deepbuster:
         if not response_headers and not response_body:
             try:
                 self.current_ai_status = f"Bootstrapping {path}"
-                http_client = AsyncHTTPClient()
+                http_client = self.http_client
                 url = f"{self.base_url}{path}"
                 headers = dict(self.headers) if self.headers else {}
                 if self.cookie:
@@ -152,7 +383,12 @@ class Deepbuster:
                                   auth_username=self.auth_user_name,
                                   auth_password=self.auth_password,
                                   follow_redirects=self.follow_redirects,
-                                  ssl_options=self.ssl_ctx)
+                                  ssl_options=self.ssl_ctx,
+                                  validate_cert=self.validate_cert,
+                                  proxy_host=self.proxy_host,
+                                  proxy_port=self.proxy_port,
+                                  proxy_username=self.proxy_username,
+                                  proxy_password=self.proxy_password)
                 response = await http_client.fetch(req)
                 response_headers = response.headers
                 response_body = response.body
@@ -165,6 +401,11 @@ class Deepbuster:
         words = await self.ai_engine.analyze(path, response_headers, response_body)
         if words:
             self.current_ai_status = f"Injecting {len(words)} AI words"
+            for word in words:
+                word_clean = word.strip().strip("/")
+                if word_clean and word_clean not in self.ai_generated_words_list:
+                    self.ai_generated_words_list.append(word_clean)
+            self.ai_words_generated = len(self.ai_generated_words_list)
             # Cross-pollination: test generated words in all scanned directories!
             for directory in list(self.scanned_directories):
                 # Ensure directory ends with '/' for clean merging
@@ -177,6 +418,8 @@ class Deepbuster:
         self.current_ai_status = "Idle"
 
     async def run(self, paths: Iterable[str]) -> None:
+        self.current_state = "running"
+        self.http_client = AsyncHTTPClient(max_clients=max(200, self.num_workers))
         has_wildcard = await self.check_wildcard()
         if has_wildcard:
             print("\n\u001b[33;1mWARNING: Active response on random HTTP requests! (Wildcard detected)\u001b[0m")
@@ -218,73 +461,143 @@ class Deepbuster:
         # Drain all background AI tasks that might inject more paths
         while len(self.ai_tasks) > 0:
             self.current_ai_status = f"Waiting for {len(self.ai_tasks)} AI task(s)"
-            # Wait for currently running AI tasks to finish
-            await asyncio.gather(*list(self.ai_tasks), return_exceptions=True)
+            # Wait for currently running AI tasks to finish with a maximum timeout of 15 seconds
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*list(self.ai_tasks), return_exceptions=True),
+                    timeout=15.0
+                )
+            except asyncio.TimeoutError:
+                print("\n[!] AI tasks wait timed out after 15 seconds. Proceeding to finish scan.")
+                break
             # Re-join queue in case those AI tasks added new paths
             await self.queue.join()
             
-        self.current_ai_status = "Done"
+            self.current_ai_status = "Done"
+        self.current_state = "completed"
 
         for worker in workers:
             worker.cancel()
 
     async def try_url(self) -> None:
+        await self.pause_event.wait()
+        if self.current_state == "stopped":
+            return
         if self.delay > 0:
             await asyncio.sleep(self.delay / 1000.0)
+        if self.current_state == "stopped":
+            return
         path = await self.queue.get()
-        if self.ai_enabled and self.ai_engine:
-            for segment in path.strip("/").split("/"):
-                if segment:
-                    self.ai_engine.mark_word_processed(segment)
-        if not self.use_path_as_is:
-            if not path.startswith('/'):
-                path = '/' + path
-            if not self.dont_force_slash and not path.endswith('/'):
-                # Only append slash if there's no extension in the last path segment
-                last_segment = path.split('/')[-1]
-                if '.' not in last_segment:
-                    path = path + '/'
-        url = f'{self.base_url}{path}'
-        if callable(self.pre_fetch_callback):
-            await self.pre_fetch_callback(path)
+        if self.current_state == "stopped":
+            self.queue.task_done()
+            return
+            
+        got_path = True
         try:
-            http_client = AsyncHTTPClient()
+            if not self.use_path_as_is:
+                if not path.startswith('/'):
+                    path = '/' + path
+                if not self.dont_force_slash and not path.endswith('/'):
+                    # Only append slash if there's no extension in the last path segment
+                    last_segment = path.split('/')[-1]
+                    if '.' not in last_segment:
+                        path = path + '/'
+            
+            # Deduplicate using self.visited_paths
+            if path in self.visited_paths:
+                return
+            self.visited_paths.add(path)
+
+            # Construct URL by quoting the path correctly (keeping slashes)
+            quoted_path = urllib.parse.quote(path, safe='/')
+            url = f'{self.base_url}{quoted_path}'
+            if callable(self.pre_fetch_callback):
+                await self.pre_fetch_callback(path)
+            
+            http_client = self.http_client
             headers = dict(self.headers) if self.headers else {}
+            if 'Connection' not in headers:
+                headers['Connection'] = 'close'
             if self.cookie:
                 headers['Cookie'] = self.cookie
 
+            user_agent = self.user_agent
+            if self.rotate_user_agents:
+                import random
+                user_agent = random.choice(USER_AGENTS)
+
             req = HTTPRequest(url,
-                              user_agent=self.user_agent,
+                              user_agent=user_agent,
                               headers=headers,
                               auth_username=self.auth_user_name,
                               auth_password=self.auth_password,
                               follow_redirects=self.follow_redirects,
-                              ssl_options=self.ssl_ctx)
-            response = await http_client.fetch(req)
+                              ssl_options=self.ssl_ctx,
+                              validate_cert=self.validate_cert,
+                              proxy_host=self.proxy_host,
+                              proxy_port=self.proxy_port,
+                              proxy_username=self.proxy_username,
+                              proxy_password=self.proxy_password,
+                              connect_timeout=10.0,
+                              request_timeout=10.0)
+            
+            # Retry loop for 599 timeouts or network dropouts
+            max_retries = 2
+            attempt = 0
+            response = None
+            while attempt <= max_retries:
+                try:
+                    if attempt > 0:
+                        await asyncio.sleep(0.1 * attempt)
+                    self.total_requests += 1
+                    response = await http_client.fetch(req)
+                    break
+                except HTTPClientError as e:
+                    if e.code == 599 and attempt < max_retries:
+                        attempt += 1
+                        self.total_requests -= 1
+                        continue
+                    raise e
+                except Exception as e:
+                    if attempt < max_retries:
+                        attempt += 1
+                        self.total_requests -= 1
+                        continue
+                    raise e
+            self.track_response_code(response.code)
             if response.code in self.ignored_codes:
                 return
             # print([i for i in response.headers.get_all()])
-            print(len(response.body))
+
+            # Extract body size with Content-Length fallback
+            body_len = len(response.body) if response.body else 0
+            if body_len == 0 and response.headers:
+                content_length = response.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        body_len = int(content_length)
+                    except ValueError:
+                        pass
 
             if response.code == 200 and self.fine_tune_404:
-                body_len = len(response.body)
                 normalized_len = body_len - len(path)
                 
                 # Check if the exact length or normalized length matches known nonexistent sizes
                 if body_len in self.custom_404_lengths or normalized_len in self.custom_404_base_sizes:
                     # To prevent false positives (a real page having the same size coincidentally),
                     # we verify if common 404-related terms are present in the response body
-                    body_lower = response.body.lower()
+                    body_lower = response.body.lower() if response.body else b''
                     keywords = [b'not found', b'error', b'404', b'does not exist', b'cannot find', b'invalid']
                     has_404_keyword = any(kw in body_lower for kw in keywords)
                     
                     if has_404_keyword:
                         if callable(self.error_callback):
-                            await self.error_callback(f'{path} -> Ignored (Soft 404 matching nonexistent size and signature)')
+                            await self.error_callback(f'{path} -> Ignored (Soft 404 matching nonexistent size and signature)', 404, body_len)
                         self.results.append({
                             'path': path,
                             'effective_url': response.effective_url,
                             'status_code': 404,
+                            'response_size': body_len,
                             'headers': [header for header in response.headers.get_all()],
                         })
                         return
@@ -293,6 +606,7 @@ class Deepbuster:
                 'path': path,
                 'effective_url': response.effective_url,
                 'status_code': response.code,
+                'response_size': body_len,
                 'headers': [header for header in response.headers.get_all()],
             })
 
@@ -311,22 +625,44 @@ class Deepbuster:
             # يتم تنفيذ هذا الشرط  في كل الاحوال طالما انه تم الوصول الى الخادم مثل http 200 301 302
             # وفي حال لم يتم الرد يتم تنفيذ الشرط الموجود في exception مثل error 404 500
             if callable(self.found_callback):
-                await self.found_callback(path, response.code, len(response.body))
+                await self.found_callback(path, response.code, body_len)
         except HTTPClientError as e:
+            self.track_response_code(e.code)
             if e.code in self.ignored_codes:
                 return
             # print(f'{e.response} for {path}')
-            body_len = len(e.response.body) if e.response else 0
+            body_len = len(e.response.body) if e.response and e.response.body else 0
+            if body_len == 0 and e.response and e.response.headers:
+                content_length = e.response.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        body_len = int(content_length)
+                    except ValueError:
+                        pass
             if callable(self.error_callback):
                 await self.error_callback(path, e.code, body_len)
             self.results.append({
                 'path': path,
                 'effective_url': '',
                 'status_code': e.code,
+                'response_size': body_len,
+                'headers': [],
+            })
+        except Exception as e:
+            self.track_response_code(0)
+            await self.safe_print(f"\u001b[31;1m[!] Request exception for {path}: {e}\u001b[0m")
+            if callable(self.error_callback):
+                await self.error_callback(path, 0, 0)
+            self.results.append({
+                'path': path,
+                'effective_url': '',
+                'status_code': 0,
+                'response_size': 0,
                 'headers': [],
             })
         finally:
-            self.queue.task_done()
+            if got_path:
+                self.queue.task_done()
 
     async def worker(self) -> None:
         while True:
@@ -334,6 +670,8 @@ class Deepbuster:
                 await self.try_url()
             except asyncio.CancelledError:
                 return
+            except Exception as e:
+                await self.safe_print(f"\u001b[31;1m[!] Worker outer loop error: {e}\u001b[0m")
 
     async def handle_recursive_directory(self, path: str) -> None:
         if path in self.scanned_directories:
@@ -341,28 +679,19 @@ class Deepbuster:
         
         self.scanned_directories.add(path)
         
-        should_recurse = False
-        if self.recursive:
-            if self.interactive_recursive:
-                # Synchronize prompts between parallel workers
-                async with self.input_lock:
-                    # Execute input() in a thread to keep the asyncio event loop running
-                    choice = await asyncio.to_thread(
-                        input, f"\n==> Directory found: {path}\nDo you want to scan it recursively? (y/n): "
-                    )
-                    if choice.strip().lower() == 'y':
-                        should_recurse = True
-            else:
-                should_recurse = True
+        should_recurse = self.recursive
         
         # If user skips recursion or recursive is disabled, we keep the path in scanned_directories to avoid re-prompting/re-processing
         if should_recurse:
-            print(f"\n\u001b[34;1m[+] Adding recursive scan for directory: {path}\u001b[0m")
+            await self.safe_print(f"\u001b[34;1m[+] Adding recursive scan for directory: {path}\u001b[0m")
             for word in self.wordlist:
                 clean_word = word[1:] if word.startswith('/') else word
                 await self.queue.put(f"{path}{clean_word}")
 
-
+    async def safe_print(self, msg: str) -> None:
+        async with self.print_lock:
+            sys.stdout.write(f"\r\u001b[0K{msg}\n")
+            sys.stdout.flush()
 
     @property
     def result(self) -> Iterable[str]:
@@ -371,12 +700,66 @@ class Deepbuster:
     def alive(self) -> Iterable[str]:
         return [r for r in self.results if r['status_code'] == 200]
 
+    def get_current_scanning_directory(self) -> str:
+        if not self.queue.empty():
+            # In asyncio.Queue, _queue is a deque
+            first_item = self.queue._queue[0]
+            last_slash_idx = first_item.rfind('/')
+            if last_slash_idx > 0:
+                return first_item[:last_slash_idx + 1]
+        return '/'
 
-async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], **kwargs) -> None:
+    async def skip_current_directory(self):
+        dir_to_skip = self.get_current_scanning_directory()
+        new_items = []
+        skipped_count = 0
+        while not self.queue.empty():
+            try:
+                item = self.queue.get_nowait()
+                self.queue.task_done()
+                if item.startswith(dir_to_skip):
+                    skipped_count += 1
+                else:
+                    new_items.append(item)
+            except asyncio.QueueEmpty:
+                break
+        
+        for item in new_items:
+            await self.queue.put(item)
+            
+        return dir_to_skip, skipped_count
+
+    def get_progress_snapshot(self):
+        return {
+            "total_requests": getattr(self, 'total_requests', 0),
+            "queue_size": self.queue.qsize(),
+            "scanned_dirs": list(self.scanned_directories),
+            "ai_status": getattr(self, 'current_ai_status', 'Inactive'),
+            "ai_words_generated": getattr(self, 'ai_words_generated', 0),
+            "ai_words_list": getattr(self, 'ai_generated_words_list', []),
+            "ai_tasks_count": len(getattr(self, 'ai_tasks', [])),
+            "results_count": len(self.results),
+            "is_paused": not self.pause_event.is_set(),
+            "paused_reason": getattr(self, 'paused_reason', None),
+            "status": getattr(self, 'current_state', 'running')
+        }
+
+
+async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> None:
 
     # Add protocol scheme if not present
     if not base_url.startswith("http://") and not base_url.startswith("https://"):
         base_url = "http://" + base_url
+
+    # Load all wordlist lines into memory to calculate stats
+    wordlists_data = []
+    total_words = 0
+    wordlist_paths = []
+    for word_file in word_files:
+        lines = word_file.readlines()
+        wordlists_data.append(lines)
+        total_words += len(lines)
+        wordlist_paths.append(getattr(word_file, 'name', '<stdin>'))
 
     # Beautiful Ascii art banner in Feroxbuster style
     print("\u001b[35;1m" + r"""
@@ -385,33 +768,67 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
 | | | | |_  |  _| | |_) |  _ \| |   \___ \ | | |  _| | |_) |
 | |_| |  _| | |___|  __/| |_) | |___ ___) || | | |___|  _ < 
 |____/|_|   |_____|_|   |____/|_____|____/ |_| |_____|_| \_\ """ + "\u001b[0m" + """
-    \u001b[36mby Salem-Al-Zuhairi\u001b[0m               \u001b[33;1mver: 2.5.0\u001b[0m
+    \u001b[36mby OverPowerTeam\u001b[0m               \u001b[33;1mver: beta\u001b[0m
 ============================================================
 """)
 
     print(f"\u001b[36m🎯 Target URL      :\u001b[0m {base_url}")
+    print(f"\u001b[36m📂 Wordlists       :\u001b[0m {', '.join(wordlist_paths)} ({total_words} words)")
     print(f"\u001b[36m🚀 Threads         :\u001b[0m {kwargs.get('num_workers', 10)}")
+    print(f"\u001b[36m⏳ Delay           :\u001b[0m {kwargs.get('delay', 50)} ms")
     
+    user_agent = kwargs.get('user_agent', 'Mozilla/5.0')
+    print(f"\u001b[36m👤 User-Agent      :\u001b[0m {user_agent}")
+    
+    cookies = kwargs.get('cookie') or kwargs.get('cookies')
+    if cookies:
+        print(f"\u001b[36m🍪 Cookies         :\u001b[0m {cookies}")
+        
+    headers = kwargs.get('headers')
+    if headers:
+        print(f"\u001b[36m🏷️  Headers         :\u001b[0m {headers}")
+        
     probe_exts = kwargs.get('probe_extensions', [])
     if probe_exts:
-        print(f"\u001b[36m📂 Extensions      :\u001b[0m {probe_exts}")
+        print(f"\u001b[36m📂 Extensions      :\u001b[0m {', '.join(probe_exts)}")
         
     ignore_case = kwargs.get('ignore_case', False)
     if ignore_case:
         print(f"\u001b[36m🔎 Ignore Case     :\u001b[0m {ignore_case}")
         
-    delay = kwargs.get('delay', 50)
-    print(f"\u001b[36m⏳ Delay           :\u001b[0m {delay} ms")
-    
     cert = kwargs.get('cert', None)
     if cert:
         print(f"\u001b[36m🛡️  Client Cert     :\u001b[0m {cert}")
         
     ignored_codes = kwargs.get('ignored_codes', [])
     if ignored_codes:
-        print(f"\u001b[36m🚫 Ignored Codes   :\u001b[0m {ignored_codes}")
+        print(f"\u001b[36m🚫 Ignored Codes   :\u001b[0m {list(ignored_codes)}")
         
-    print(f"\u001b[36m🔄 Recursion       :\u001b[0m {kwargs.get('recursive', True)} (Interactive: {kwargs.get('interactive_recursive', False)})")
+    recursive = kwargs.get('recursive', True)
+    rec_status = "Enabled" if recursive else "Disabled"
+    print(f"\u001b[36m🔄 Recursion       :\u001b[0m {rec_status}")
+    
+    ai_status = "Enabled" if kwargs.get('ai_enabled', False) else "Disabled"
+    print(f"\u001b[36m💡 AI Deep Scan    :\u001b[0m {ai_status}")
+    
+    rotate_ua = kwargs.get('rotate_user_agents', False)
+    rotate_ua_status = "Enabled" if rotate_ua else "Disabled"
+    print(f"\u001b[36m🔄 Rotate UAs      :\u001b[0m {rotate_ua_status}")
+    
+    auto_pause = kwargs.get('auto_pause', True)
+    auto_pause_status = "Enabled" if auto_pause else "Disabled"
+    print(f"\u001b[36m⚠️  WAF Auto-Pause :\u001b[0m {auto_pause_status}")
+    
+    validate_cert = kwargs.get('validate_cert', True)
+    ssl_val_status = "Enabled" if validate_cert else "Disabled (Insecure)"
+    print(f"\u001b[36m🔒 SSL Verification:\u001b[0m {ssl_val_status}")
+
+    output_file = kwargs.get('output_file')
+    if output_file:
+        print(f"\u001b[36m📝 Output File     :\u001b[0m {output_file}")
+        
+    start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\u001b[36m🕒 Start Time      :\u001b[0m {start_time_str}")
     # Instantiate the scanning engine first to let hooks access status
     deepbuster = Deepbuster(base_url, **kwargs)
 
@@ -422,61 +839,67 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
     else:
         print("============================================================\n")
 
-    # Define dynamic interactive lock for CLI printing
-    print_lock = asyncio.Lock()
+    # Define a request counter for the spinner animation
+    requests_count = 0
+    spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    async def pre_fetch_hook(url: str) -> None:
-        async with print_lock:
+    # Simple size formatter helper
+    def format_cli_size(bytes_size: int) -> str:
+        if bytes_size < 1024:
+            return f"{bytes_size} B"
+        elif bytes_size < 1024 * 1024:
+            return f"{bytes_size / 1024:.2f} KB"
+        return f"{bytes_size / (1024 * 1024):.2f} MB"
+
+    async def pre_fetch_hook(path: str) -> None:
+        nonlocal requests_count
+        async with deepbuster.print_lock:
+            requests_count += 1
             ai_status = ""
             if deepbuster.ai_enabled:
                 ai_status = f" | \u001b[35;1m[AI: {deepbuster.current_ai_status} ({len(deepbuster.ai_tasks)} tasks)]\u001b[0m"
-            # Overwrite current line (Feroxbuster style)
-            print(f'\r\u001b[36m[⧗]\u001b[0m Testing: {url}{ai_status}\u001b[0K', end='', flush=True)
-
-    async def found_hook(url: str, status_code: int, size: int) -> None:
-        async with print_lock:
-            # Highlighting status code in different colors
-            if status_code == 200:
-                status_color = "\u001b[32;1m" # Green
-            elif status_code in [301, 302]:
-                status_color = "\u001b[33;1m" # Yellow
-            else:
-                status_color = "\u001b[36;1m" # Cyan
             
-            # Print beautiful aligned result
-            print(f'\r{status_color}{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
+            spinner = spinner_chars[requests_count % len(spinner_chars)]
+            sys.stdout.write(f"\r\u001b[36m[{spinner}]\u001b[0m Testing: {path}{ai_status} | Requests: {requests_count}\u001b[0K")
+            sys.stdout.flush()
 
-    async def error_hook(url: str, status_code: int, size: int) -> None:
-        async with print_lock:
-            # Hide 404 error logs by default to keep CLI clean
-            if status_code == 404:
-                return
-            # Red color for other error / hidden pages
-            print(f'\r\u001b[31;1m{status_code:<5}\u001b[0m  GET   {size:>8}b   {url}\u001b[0K')
+    async def found_hook(path: str, status_code: int, size: int) -> None:
+        if status_code >= 200 and status_code < 300:
+            status_color = "\u001b[32;1m" # Green
+        elif status_code >= 300 and status_code < 400:
+            status_color = "\u001b[33;1m" # Yellow
+        elif status_code in [401, 403]:
+            status_color = "\u001b[35;1m" # Magenta
+        else:
+            status_color = "\u001b[31;1m" # Red
+        
+        size_str = format_cli_size(size)
+        msg = f"\u001b[32m[+]\u001b[0m {status_color}{status_code:<5}\u001b[0m GET   {size_str:>9}   {path}"
+        await deepbuster.safe_print(msg)
+
+    async def error_hook(path: str, status_code: int, size: int) -> None:
+        if status_code in [401, 403]:
+            status_color = "\u001b[35;1m" # Magenta
+        else:
+            status_color = "\u001b[31;1m" # Red
+            
+        size_str = format_cli_size(size)
+        msg = f"\u001b[31m[-]\u001b[0m {status_color}{status_code:<5}\u001b[0m GET   {size_str:>9}   {path}"
+        await deepbuster.safe_print(msg)
 
     quiet = kwargs.get('quiet', False)
     deepbuster.pre_fetch_callback = pre_fetch_hook if not quiet else None
     deepbuster.found_callback = found_hook if not quiet else None
     deepbuster.error_callback = error_hook if not quiet else None
 
-    for word_file in word_files:
-        await deepbuster.run(word_file.readlines())
+    for lines in wordlists_data:
+        await deepbuster.run(lines)
 
-    if kwargs.get('output_file'):
-        output = open(kwargs.get('output_file'), 'w+')
+    output_file = kwargs.get('output_file')
+    if output_file:
+        save_output(output_file, deepbuster.results, is_csv=kwargs.get('csv', False), base_url=base_url)
     else:
-        output = sys.stdout
-
-    if kwargs.get('csv'):
-        ESC_QUOTES = str.maketrans({'"': r'\"'})
-        FIELDS = ['status_code', 'path', 'effective_url', 'headers']
-        output.write(f'''{';'.join(FIELDS)}\n''')
-        for result in deepbuster.results:
-            output.write(f'''{result['status_code']};"{result['path'].translate(ESC_QUOTES)}";"{result['effective_url'].translate(ESC_QUOTES)}";''')
-            headers = [f'"{h.translate(ESC_QUOTES)}:{v.translate(ESC_QUOTES)}"' for (h, v) in result['headers']]
-            output.write(','.join(headers))
-            output.write('\n')
-    else:
+        # CLI print to stdout
         alive = deepbuster.alive()
         print("\n========================= RESULTS ==========================")
         if len(alive) == 0:
@@ -491,12 +914,11 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
 if __name__ == '__main__':
     DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
     DEFAULT_NUM_WORKERS = 20
-    parser = argparse.ArgumentParser(prog='deepbuster', description='Directory Buster')
+    parser = argparse.ArgumentParser(prog='deepbuster', description='')
     # -S : Silent Mode. Don't show tested words. (For dumb terminals) 
     # لم تتم اضافته لانه قديم ولا داعي له هو شبيه ب -q لكنه مخصص للتيرمنال القديم الذي لا يدعم الالوان
-    parser.add_argument('base_url', help='Base URL, e.g. https://example.com')
+    parser.add_argument('base_url', help='Base URL, e.g. https://example.com', nargs='?')
     parser.add_argument('-n', '--num-workers', help='parallelize scanning with n workers running concurrently', type=int, default=DEFAULT_NUM_WORKERS)
-    parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('-q', '--quiet', action='store_true', default=False)
     parser.add_argument('-w', '--word-file', help='Word file', action='append', default=[])
     parser.add_argument('-W', '--dont-stop-on-warning', action='store_true', help="Don't stop on WARNING messages", default=False)
@@ -512,7 +934,6 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--dont-force-slash', action='store_true', help="Don't force an ending '/' on URLs", default=False)
     parser.add_argument('-i', '--ignore-case', action='store_true', help="Case-insensitive scanning (normalize wordlist paths to lowercase)", default=False)
     parser.add_argument('-r', '--no-recursive', action='store_true', help="Don't search recursively", default=False)
-    parser.add_argument('-R', '--interactive-recursive', action='store_true', help="Interactive recursive search (ask before entering every directory)", default=False)
     parser.add_argument('-d', '--delay', help='Add a milliseconds delay in each request', type=int, default=50)
     parser.add_argument('-E', '--cert', help='Client certificate file (or cert,key split by comma)')
     parser.add_argument('-N', '--ignore-code', help='Ignore responses with these HTTP status codes (comma-separated or multiple flags)', action='append', default=[])
@@ -520,24 +941,28 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', help='Write output to file')
     parser.add_argument('-G', '--gui', action='store_true', help="Launch web based GUI", default=False)
     parser.add_argument('-A', '--ai', action='store_true', help="AI-powered deep scanning", default=False)
+    parser.add_argument('-U', '--rotate-user-agents', action='store_true', help="Rotate User-Agents randomly for each request", default=False)
+    parser.add_argument('--no-auto-pause', action='store_true', help="Disable automatic pausing of scan when WAF block (403/429) is suspected", default=False)
+    parser.add_argument('-k', '--insecure', action='store_true', help='Allow insecure server connections when using SSL/TLS (Ignore SSL verification)', default=False)
     args = parser.parse_args()
+    
+    if args.gui:
+        import gui_server
+        gui_server.start_gui_server()
+        sys.exit(0)
+
+    if not args.base_url:
+        parser.error("the following arguments are required: base_url")
+
     word_files = [sys.stdin]
     if len(args.word_file) > 0:
         word_files = [open(filename, 'r') for filename in args.word_file]
     
-    ignored_codes = []
-    if args.ignore_code:
-        for item in args.ignore_code:
-            for code in item.split(','):
-                try:
-                    ignored_codes.append(int(code.strip()))
-                except ValueError:
-                    pass
+    ignored_codes = parse_ignore_codes(args.ignore_code)
 
     try:
         asyncio.run(main(
             args.base_url,
-            args.verbose,
             word_files,
             quiet=args.quiet,
             user_agent=args.user_agent,
@@ -545,8 +970,8 @@ if __name__ == '__main__':
             headers=args.header,
             credentials=args.credentials,
             follow_redirects=args.follow_redirects,
-            probe_extensions=args.probe_extensions.split(',') if isinstance(args.probe_extensions, str) else [],
-            probe_variations=args.probe_variations.split(',') if isinstance(args.probe_variations, str) else [],
+            probe_extensions=parse_extensions(args.probe_extensions),
+            probe_variations=parse_variations(args.probe_variations),
             num_workers=args.num_workers,
             csv=args.csv,
             dont_force_slash=args.dont_force_slash,
@@ -554,12 +979,14 @@ if __name__ == '__main__':
             fine_tune_404=args.fine_tune_404,
             ignore_case=args.ignore_case,
             recursive=not args.no_recursive,
-            interactive_recursive=args.interactive_recursive,
             delay=args.delay,
             cert=args.cert,
             ignored_codes=ignored_codes,
             use_path_as_is=args.use_path_as_is,
             ai_enabled=args.ai,
+            rotate_user_agents=args.rotate_user_agents,
+            auto_pause=not args.no_auto_pause,
+            validate_cert=not args.insecure,
             output_file=args.output))
     except KeyboardInterrupt:
         print("\n\n\u001b[31;1m[!] Caught Ctrl+C ... Saving results and shutting down deepbuster cleanly.\u001b[0m")
