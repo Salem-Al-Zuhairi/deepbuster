@@ -74,7 +74,10 @@ def take_screenshot(url, output_path_base):
             page = browser.new_page()
             page.set_viewport_size({"width": 1280, "height": 720})
             # Set timeout to 12 seconds to avoid hanging, wait until network is idle
-            page.goto(url, timeout=12000, wait_until="networkidle")
+            try:
+                page.goto(url, timeout=12000, wait_until="networkidle")
+            except Exception as goto_err:
+                print(f"[*] Playwright load timeout for {url}: {goto_err}. Taking screenshot of current state...")
             time.sleep(0.5)
             page.screenshot(path=png_path)
             browser.close()
