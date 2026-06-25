@@ -5,6 +5,8 @@
  */
 
 document.addEventListener("DOMContentLoaded", () => {
+    window.currentAiWords = [];
+
     // Navigation Tabs Routing
     const navButtons = document.querySelectorAll(".nav-btn");
     const tabPanels = document.querySelectorAll(".tab-panel");
@@ -167,6 +169,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const progressPercent = document.getElementById("progressPercent");
     const aiStatusText = document.getElementById("aiStatusText");
     const aiWordsText = document.getElementById("aiWordsText");
+    const btnViewAiWords = document.getElementById("btnViewAiWords");
+    const aiWordsModal = document.getElementById("aiWordsModal");
+    const closeAiWords = document.getElementById("closeAiWords");
+    const btnCloseAiWordsFooter = document.getElementById("btnCloseAiWordsFooter");
+    const aiWordsListContainer = document.getElementById("aiWordsListContainer");
     const statusMessage = document.getElementById("statusMessage");
 
     const count2xx = document.getElementById("count2xx");
@@ -423,6 +430,7 @@ document.addEventListener("DOMContentLoaded", () => {
             statDirectory.textContent = state.current_directory || "/";
             aiStatusText.textContent = state.ai_status;
             if (aiWordsText) aiWordsText.textContent = state.ai_words_generated || 0;
+            window.currentAiWords = state.ai_words_list || [];
 
 
 
@@ -1482,6 +1490,44 @@ document.addEventListener("DOMContentLoaded", () => {
             URL.revokeObjectURL(url);
         });
     }
+
+    // ============================================
+    // AI Generated Words Modal Controllers
+    // ============================================
+    window.currentAiWords = [];
+
+    if (btnViewAiWords) {
+        btnViewAiWords.addEventListener("click", () => {
+            if (aiWordsListContainer) {
+                if (window.currentAiWords && window.currentAiWords.length > 0) {
+                    aiWordsListContainer.innerHTML = window.currentAiWords.map(word => {
+                        return `<span style="background: rgba(157, 78, 221, 0.15); border: 1px solid rgba(157, 78, 221, 0.4); color: #e2c0ff; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-family: monospace;">${word}</span>`;
+                    }).join("");
+                } else {
+                    aiWordsListContainer.innerHTML = `<span class="no-words-msg" style="color: var(--text-muted); font-style: italic;">No words generated yet.</span>`;
+                }
+            }
+            if (aiWordsModal) aiWordsModal.classList.add("open");
+        });
+    }
+
+    if (closeAiWords) {
+        closeAiWords.addEventListener("click", () => {
+            if (aiWordsModal) aiWordsModal.classList.remove("open");
+        });
+    }
+
+    if (btnCloseAiWordsFooter) {
+        btnCloseAiWordsFooter.addEventListener("click", () => {
+            if (aiWordsModal) aiWordsModal.classList.remove("open");
+        });
+    }
+
+    window.addEventListener("click", (e) => {
+        if (e.target === aiWordsModal) {
+            aiWordsModal.classList.remove("open");
+        }
+    });
 
     // Load static arrays history immediately on load
     loadAiConfig();

@@ -39,6 +39,7 @@ class ActiveScan:
         self.counts = {2: 0, 3: 0, 4: 0, 5: 0}
         self.total_requests = 0
         self.ai_words_generated = 0
+        self.ai_words_list = []
 
     def reset(self, scan_id, target_url):
         with self.lock:
@@ -54,6 +55,7 @@ class ActiveScan:
             self.counts = {2: 0, 3: 0, 4: 0, 5: 0}
             self.total_requests = 0
             self.ai_words_generated = 0
+            self.ai_words_list = []
 
 active_scan = ActiveScan()
 
@@ -589,6 +591,7 @@ def get_scan_status():
     if active_scan.scanner:
         snapshot = active_scan.scanner.get_progress_snapshot()
         active_scan.ai_words_generated = snapshot.get("ai_words_generated", 0)
+        active_scan.ai_words_list = snapshot.get("ai_words_list", [])
         if snapshot.get("is_paused", False) and active_scan.status == "running":
             active_scan.status = "paused"
             database.update_scan_status(active_scan.scan_id, "paused")
@@ -599,6 +602,7 @@ def get_scan_status():
         "target_url": active_scan.target_url,
         "total_requests": active_scan.total_requests,
         "ai_words_generated": active_scan.ai_words_generated,
+        "ai_words_list": active_scan.ai_words_list,
         "counts": active_scan.counts,
         "queue_size": snapshot.get("queue_size", 0),
         "ai_status": snapshot.get("ai_status", "Inactive"),

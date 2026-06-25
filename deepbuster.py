@@ -219,6 +219,7 @@ class Deepbuster:
         self.ai_unchecked_words = []
         self.current_ai_status = "Inactive"
         self.ai_words_generated = 0
+        self.ai_generated_words_list = []
         
         if self.ai_enabled:
             from urllib.parse import urlparse
@@ -400,7 +401,11 @@ class Deepbuster:
         words = await self.ai_engine.analyze(path, response_headers, response_body)
         if words:
             self.current_ai_status = f"Injecting {len(words)} AI words"
-            self.ai_words_generated += len(words)
+            for word in words:
+                word_clean = word.strip().strip("/")
+                if word_clean and word_clean not in self.ai_generated_words_list:
+                    self.ai_generated_words_list.append(word_clean)
+            self.ai_words_generated = len(self.ai_generated_words_list)
             # Cross-pollination: test generated words in all scanned directories!
             for directory in list(self.scanned_directories):
                 # Ensure directory ends with '/' for clean merging
@@ -707,6 +712,7 @@ class Deepbuster:
             "scanned_dirs": list(self.scanned_directories),
             "ai_status": getattr(self, 'current_ai_status', 'Inactive'),
             "ai_words_generated": getattr(self, 'ai_words_generated', 0),
+            "ai_words_list": getattr(self, 'ai_generated_words_list', []),
             "ai_tasks_count": len(getattr(self, 'ai_tasks', [])),
             "results_count": len(self.results),
             "is_paused": not self.pause_event.is_set(),
