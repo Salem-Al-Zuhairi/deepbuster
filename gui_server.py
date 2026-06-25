@@ -764,7 +764,47 @@ def find_free_port(start_port):
             port += 1
     return start_port
 
+def ensure_playwright_installed():
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        print("[+] Playwright and Chromium are fully installed and available.")
+    except (ImportError, Exception) as e:
+        print(f"[-] Playwright/Chromium check failed: {e}. Attempting auto-installation...")
+        import subprocess
+        import sys
+        
+        # 1. Install playwright pip package
+        try:
+            print("[*] Installing playwright pip package...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "playwright", "--break-system-packages"], check=True)
+        except Exception as install_err:
+            print(f"[!] Pip install failed: {install_err}")
+            
+        # 2. Run playwright install chromium
+        try:
+            print("[*] Running 'playwright install chromium'...")
+            subprocess.run(["playwright", "install", "chromium"], check=True)
+        except Exception as install_err:
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+            except Exception as install_err2:
+                print(f"[!] 'playwright install chromium' failed: {install_err2}")
+                
+        # 3. Run playwright install-deps chromium (to install Linux system deps)
+        try:
+            print("[*] Running 'playwright install-deps chromium'...")
+            subprocess.run(["playwright", "install-deps", "chromium"], check=True)
+        except Exception as install_err:
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install-deps", "chromium"], check=True)
+            except Exception as install_err2:
+                print(f"[!] 'playwright install-deps chromium' failed: {install_err2}")
+
 def start_gui_server():
+    ensure_playwright_installed()
     default_port = 4440
     active_port = find_free_port(default_port)
     
