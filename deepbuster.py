@@ -11,6 +11,7 @@ from typing import Iterable, Any, Callable, Awaitable
 import urllib.parse
 from ai_engine import DeepbusterAIEngine
 import os
+from datetime import datetime
 
 def parse_headers(headers_input):
     headers_dict = {}
@@ -183,9 +184,8 @@ class Deepbuster:
             else:
                 self.ssl_ctx.load_cert_chain(certfile=cert_arg.strip())
         self.recursive = kwargs.get('recursive', True)
-        self.interactive_recursive = kwargs.get('interactive_recursive', False)
         self.scanned_directories = set(['/'])
-        self.input_lock = asyncio.Lock()
+        self.print_lock = asyncio.Lock()
         self.wordlist = []
         self.ai_enabled = kwargs.get('ai_enabled', False)
         self.ai_engine = None
@@ -464,7 +464,6 @@ class Deepbuster:
             if response.code in self.ignored_codes:
                 return
             # print([i for i in response.headers.get_all()])
-            print(len(response.body))
 
             if response.code == 200 and self.fine_tune_404:
                 body_len = len(response.body)
@@ -526,7 +525,7 @@ class Deepbuster:
                 'headers': [],
             })
         except Exception as e:
-            print(f"[!] Request exception for {path}: {e}")
+            await self.safe_print(f"\u001b[31;1m[!] Request exception for {path}: {e}\u001b[0m")
             if callable(self.error_callback):
                 await self.error_callback(path, 0, 0)
             self.results.append({
@@ -546,7 +545,7 @@ class Deepbuster:
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                print(f"[!] Worker outer loop error: {e}")
+                await self.safe_print(f"\u001b[31;1m[!] Worker outer loop error: {e}\u001b[0m")
 
     async def handle_recursive_directory(self, path: str) -> None:
         if path in self.scanned_directories:
@@ -554,28 +553,19 @@ class Deepbuster:
         
         self.scanned_directories.add(path)
         
-        should_recurse = False
-        if self.recursive:
-            if self.interactive_recursive:
-                # Synchronize prompts between parallel workers
-                async with self.input_lock:
-                    # Execute input() in a thread to keep the asyncio event loop running
-                    choice = await asyncio.to_thread(
-                        input, f"\n==> Directory found: {path}\nDo you want to scan it recursively? (y/n): "
-                    )
-                    if choice.strip().lower() == 'y':
-                        should_recurse = True
-            else:
-                should_recurse = True
+        should_recurse = self.recursive
         
         # If user skips recursion or recursive is disabled, we keep the path in scanned_directories to avoid re-prompting/re-processing
         if should_recurse:
-            print(f"\n\u001b[34;1m[+] Adding recursive scan for directory: {path}\u001b[0m")
+            await self.safe_print(f"\u001b[34;1m[+] Adding recursive scan for directory: {path}\u001b[0m")
             for word in self.wordlist:
                 clean_word = word[1:] if word.startswith('/') else word
                 await self.queue.put(f"{path}{clean_word}")
 
-
+    async def safe_print(self, msg: str) -> None:
+        async with self.print_lock:
+            sys.stdout.write(f"\r\u001b[0K{msg}\n")
+            sys.stdout.flush()
 
     @property
     def result(self) -> Iterable[str]:
@@ -626,11 +616,21 @@ class Deepbuster:
         }
 
 
-async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], **kwargs) -> None:
+async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> None:
 
     # Add protocol scheme if not present
     if not base_url.startswith("http://") and not base_url.startswith("https://"):
         base_url = "http://" + base_url
+
+    # Load all wordlist lines into memory to calculate stats
+    wordlists_data = []
+    total_words = 0
+    wordlist_paths = []
+    for word_file in word_files:
+        lines = word_file.readlines()
+        wordlists_data.append(lines)
+        total_words += len(lines)
+        wordlist_paths.append(getattr(word_file, 'name', '<stdin>'))
 
     # Beautiful Ascii art banner in Feroxbuster style
     print("\u001b[35;1m" + r"""
@@ -639,33 +639,55 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
 | | | | |_  |  _| | |_) |  _ \| |   \___ \ | | |  _| | |_) |
 | |_| |  _| | |___|  __/| |_) | |___ ___) || | | |___|  _ < 
 |____/|_|   |_____|_|   |____/|_____|____/ |_| |_____|_| \_\ """ + "\u001b[0m" + """
-    \u001b[36mby Salem-Al-Zuhairi\u001b[0m               \u001b[33;1mver: 2.5.0\u001b[0m
+    \u001b[36mby OverPowerTeam\u001b[0m               \u001b[33;1mver: beta\u001b[0m
 ============================================================
 """)
 
     print(f"\u001b[36m🎯 Target URL      :\u001b[0m {base_url}")
+    print(f"\u001b[36m📂 Wordlists       :\u001b[0m {', '.join(wordlist_paths)} ({total_words} words)")
     print(f"\u001b[36m🚀 Threads         :\u001b[0m {kwargs.get('num_workers', 10)}")
+    print(f"\u001b[36m⏳ Delay           :\u001b[0m {kwargs.get('delay', 50)} ms")
     
+    user_agent = kwargs.get('user_agent', 'Mozilla/5.0')
+    print(f"\u001b[36m👤 User-Agent      :\u001b[0m {user_agent}")
+    
+    cookies = kwargs.get('cookie') or kwargs.get('cookies')
+    if cookies:
+        print(f"\u001b[36m🍪 Cookies         :\u001b[0m {cookies}")
+        
+    headers = kwargs.get('headers')
+    if headers:
+        print(f"\u001b[36m🏷️  Headers         :\u001b[0m {headers}")
+        
     probe_exts = kwargs.get('probe_extensions', [])
     if probe_exts:
-        print(f"\u001b[36m📂 Extensions      :\u001b[0m {probe_exts}")
+        print(f"\u001b[36m📂 Extensions      :\u001b[0m {', '.join(probe_exts)}")
         
     ignore_case = kwargs.get('ignore_case', False)
     if ignore_case:
         print(f"\u001b[36m🔎 Ignore Case     :\u001b[0m {ignore_case}")
         
-    delay = kwargs.get('delay', 50)
-    print(f"\u001b[36m⏳ Delay           :\u001b[0m {delay} ms")
-    
     cert = kwargs.get('cert', None)
     if cert:
         print(f"\u001b[36m🛡️  Client Cert     :\u001b[0m {cert}")
         
     ignored_codes = kwargs.get('ignored_codes', [])
     if ignored_codes:
-        print(f"\u001b[36m🚫 Ignored Codes   :\u001b[0m {ignored_codes}")
+        print(f"\u001b[36m🚫 Ignored Codes   :\u001b[0m {list(ignored_codes)}")
         
-    print(f"\u001b[36m🔄 Recursion       :\u001b[0m {kwargs.get('recursive', True)} (Interactive: {kwargs.get('interactive_recursive', False)})")
+    recursive = kwargs.get('recursive', True)
+    rec_status = "Enabled" if recursive else "Disabled"
+    print(f"\u001b[36m🔄 Recursion       :\u001b[0m {rec_status}")
+    
+    ai_status = "Enabled" if kwargs.get('ai_enabled', False) else "Disabled"
+    print(f"\u001b[36m💡 AI Deep Scan    :\u001b[0m {ai_status}")
+    
+    output_file = kwargs.get('output_file')
+    if output_file:
+        print(f"\u001b[36m📝 Output File     :\u001b[0m {output_file}")
+        
+    start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\u001b[36m🕒 Start Time      :\u001b[0m {start_time_str}")
     # Instantiate the scanning engine first to let hooks access status
     deepbuster = Deepbuster(base_url, **kwargs)
 
@@ -676,42 +698,61 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
     else:
         print("============================================================\n")
 
-    # Define dynamic interactive lock for CLI printing
-    print_lock = asyncio.Lock()
+    # Define a request counter for the spinner animation
+    requests_count = 0
+    spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    # Simple size formatter helper
+    def format_cli_size(bytes_size: int) -> str:
+        if bytes_size < 1024:
+            return f"{bytes_size} B"
+        elif bytes_size < 1024 * 1024:
+            return f"{bytes_size / 1024:.2f} KB"
+        return f"{bytes_size / (1024 * 1024):.2f} MB"
 
     async def pre_fetch_hook(path: str) -> None:
-        async with print_lock:
+        nonlocal requests_count
+        async with deepbuster.print_lock:
+            requests_count += 1
             ai_status = ""
             if deepbuster.ai_enabled:
                 ai_status = f" | \u001b[35;1m[AI: {deepbuster.current_ai_status} ({len(deepbuster.ai_tasks)} tasks)]\u001b[0m"
-            # Overwrite current line (Feroxbuster style)
-            print(f'\r\u001b[36m[⧗]\u001b[0m Testing: {path}{ai_status}\u001b[0K', end='', flush=True)
+            
+            spinner = spinner_chars[requests_count % len(spinner_chars)]
+            sys.stdout.write(f"\r\u001b[36m[{spinner}]\u001b[0m Testing: {path}{ai_status} | Requests: {requests_count}\u001b[0K")
+            sys.stdout.flush()
 
     async def found_hook(path: str, status_code: int, size: int) -> None:
-        async with print_lock:
-            # Highlighting status code in different colors
-            if status_code == 200:
-                status_color = "\u001b[32;1m" # Green
-            elif status_code in [301, 302]:
-                status_color = "\u001b[33;1m" # Yellow
-            else:
-                status_color = "\u001b[36;1m" # Cyan
-            
-            # Print beautiful aligned result
-            print(f'\r{status_color}{status_code:<5}\u001b[0m  GET   {size:>8}b   {path}\u001b[0K')
+        if status_code >= 200 and status_code < 300:
+            status_color = "\u001b[32;1m" # Green
+        elif status_code >= 300 and status_code < 400:
+            status_color = "\u001b[33;1m" # Yellow
+        elif status_code in [401, 403]:
+            status_color = "\u001b[35;1m" # Magenta
+        else:
+            status_color = "\u001b[31;1m" # Red
+        
+        size_str = format_cli_size(size)
+        msg = f"\u001b[32m[+]\u001b[0m {status_color}{status_code:<5}\u001b[0m GET   {size_str:>9}   {path}"
+        await deepbuster.safe_print(msg)
 
     async def error_hook(path: str, status_code: int, size: int) -> None:
-        async with print_lock:
-            # Red color for error / hidden pages
-            print(f'\r\u001b[31;1m{status_code:<5}\u001b[0m  GET   {size:>8}b   {path}\u001b[0K')
+        if status_code in [401, 403]:
+            status_color = "\u001b[35;1m" # Magenta
+        else:
+            status_color = "\u001b[31;1m" # Red
+            
+        size_str = format_cli_size(size)
+        msg = f"\u001b[31m[-]\u001b[0m {status_color}{status_code:<5}\u001b[0m GET   {size_str:>9}   {path}"
+        await deepbuster.safe_print(msg)
 
     quiet = kwargs.get('quiet', False)
     deepbuster.pre_fetch_callback = pre_fetch_hook if not quiet else None
     deepbuster.found_callback = found_hook if not quiet else None
     deepbuster.error_callback = error_hook if not quiet else None
 
-    for word_file in word_files:
-        await deepbuster.run(word_file.readlines())
+    for lines in wordlists_data:
+        await deepbuster.run(lines)
 
     output_file = kwargs.get('output_file')
     if output_file:
@@ -732,12 +773,11 @@ async def main(base_url: str, verbose: int, word_files: Iterable[io.StringIO], *
 if __name__ == '__main__':
     DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
     DEFAULT_NUM_WORKERS = 20
-    parser = argparse.ArgumentParser(prog='deepbuster', description='Directory Buster')
+    parser = argparse.ArgumentParser(prog='deepbuster', description='')
     # -S : Silent Mode. Don't show tested words. (For dumb terminals) 
     # لم تتم اضافته لانه قديم ولا داعي له هو شبيه ب -q لكنه مخصص للتيرمنال القديم الذي لا يدعم الالوان
     parser.add_argument('base_url', help='Base URL, e.g. https://example.com', nargs='?')
     parser.add_argument('-n', '--num-workers', help='parallelize scanning with n workers running concurrently', type=int, default=DEFAULT_NUM_WORKERS)
-    parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('-q', '--quiet', action='store_true', default=False)
     parser.add_argument('-w', '--word-file', help='Word file', action='append', default=[])
     parser.add_argument('-W', '--dont-stop-on-warning', action='store_true', help="Don't stop on WARNING messages", default=False)
@@ -753,7 +793,6 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--dont-force-slash', action='store_true', help="Don't force an ending '/' on URLs", default=False)
     parser.add_argument('-i', '--ignore-case', action='store_true', help="Case-insensitive scanning (normalize wordlist paths to lowercase)", default=False)
     parser.add_argument('-r', '--no-recursive', action='store_true', help="Don't search recursively", default=False)
-    parser.add_argument('-R', '--interactive-recursive', action='store_true', help="Interactive recursive search (ask before entering every directory)", default=False)
     parser.add_argument('-d', '--delay', help='Add a milliseconds delay in each request', type=int, default=50)
     parser.add_argument('-E', '--cert', help='Client certificate file (or cert,key split by comma)')
     parser.add_argument('-N', '--ignore-code', help='Ignore responses with these HTTP status codes (comma-separated or multiple flags)', action='append', default=[])
@@ -780,7 +819,6 @@ if __name__ == '__main__':
     try:
         asyncio.run(main(
             args.base_url,
-            args.verbose,
             word_files,
             quiet=args.quiet,
             user_agent=args.user_agent,
@@ -797,7 +835,6 @@ if __name__ == '__main__':
             fine_tune_404=args.fine_tune_404,
             ignore_case=args.ignore_case,
             recursive=not args.no_recursive,
-            interactive_recursive=args.interactive_recursive,
             delay=args.delay,
             cert=args.cert,
             ignored_codes=ignored_codes,

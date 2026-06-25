@@ -206,9 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 httpUser: document.getElementById("optHttpUser").value.trim() || null,
                 httpPass: document.getElementById("optHttpPass").value.trim() || null,
                 noRecursive: document.getElementById("optNoRecursive").checked,
-                interactiveRecursive: document.getElementById("optInteractiveRecursive").checked,
                 dontForceSlash: document.getElementById("optDontForceSlash").checked,
-                showNotFound: document.getElementById("optShowNotFound").checked,
                 dontStopOnWarning: document.getElementById("optDontStopOnWarning").checked,
                 ignoreCase: !document.getElementById("optCaseSensitive").checked,
                 ignoreCodes: document.getElementById("optIgnoreCodes").value.trim(),
@@ -218,8 +216,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 followRedirects: document.getElementById("optFollowRedirects").checked,
                 fineTune404: document.getElementById("optFineTune404").checked,
                 usePathAsIs: document.getElementById("optUsePathAsIs").checked,
-                quiet: document.getElementById("optQuiet").checked,
-                verbosity: parseInt(document.getElementById("optVerbosity").value),
                 probeVariations: document.getElementById("optProbeVariations").value.trim() || null
             };
 

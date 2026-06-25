@@ -344,12 +344,6 @@ def start_scan():
 
     # Set up ignore code list
     ignored_codes = parse_ignore_codes(data.get("ignoreCodes", ""))
-    if not data.get("showNotFound", False):
-        if 404 not in ignored_codes:
-            ignored_codes.append(404)
-    else:
-        if 404 in ignored_codes:
-            ignored_codes.remove(404)
 
     # Build credentials
     credentials = None
@@ -380,10 +374,7 @@ def start_scan():
     follow_redirects = data.get("followRedirects", False)
     fine_tune_404 = data.get("fineTune404", False)
     use_path_as_is = data.get("usePathAsIs", False)
-    quiet = data.get("quiet", False)
-    verbose = data.get("verbosity", 0)
     output_file = data.get("outputFile")
-    interactive_recursive = data.get("interactiveRecursive", False)
 
     # Construct scan settings kwargs
     kwargs = {
@@ -409,10 +400,8 @@ def start_scan():
         "follow_redirects": follow_redirects,
         "fine_tune_404": fine_tune_404,
         "use_path_as_is": use_path_as_is,
-        "quiet": quiet,
-        "verbose": verbose,
-        "output_file": output_file,
-        "interactive_recursive": interactive_recursive
+        "quiet": False,
+        "output_file": output_file
     }
 
     # Add protocol scheme if not present

@@ -174,24 +174,14 @@
                                             Don't Search Recursively
                                         </label>
                                         <label class="check-container">
-                                            <input type="checkbox" id="optInteractiveRecursive">
-                                            <span class="checkmark"></span>
-                                            Interactive Recursion
-                                        </label>
-                                        <label class="check-container">
                                             <input type="checkbox" id="optDontForceSlash">
                                             <span class="checkmark"></span>
                                             Don't Force Ending '/'
                                         </label>
                                         <label class="check-container">
-                                            <input type="checkbox" id="optShowNotFound">
-                                            <span class="checkmark"></span>
-                                            Show Also Not Found (404)
-                                        </label>
-                                        <label class="check-container">
                                             <input type="checkbox" id="optDontStopOnWarning">
                                             <span class="checkmark"></span>
-                                            Don't Stop on Warning
+                                            Ignore Wildcard Warnings
                                         </label>
                                         <label class="check-container">
                                             <input type="checkbox" id="optCaseSensitive">
@@ -201,7 +191,7 @@
                                         <label class="check-container">
                                             <input type="checkbox" id="optFollowRedirects">
                                             <span class="checkmark"></span>
-                                            Follow Redirects (301/302)
+                                            Follow Redirects
                                         </label>
                                         <label class="check-container">
                                             <input type="checkbox" id="optFineTune404">
@@ -212,11 +202,6 @@
                                             <input type="checkbox" id="optUsePathAsIs">
                                             <span class="checkmark"></span>
                                             Use Path As-Is
-                                        </label>
-                                        <label class="check-container">
-                                            <input type="checkbox" id="optQuiet">
-                                            <span class="checkmark"></span>
-                                            Quiet Mode
                                         </label>
                                     </div>
 
@@ -270,19 +255,9 @@
                                             class="range-slider">
                                     </div>
 
-                                    <div class="form-row">
-                                        <div class="form-group half">
-                                            <label for="optVerbosity">Console Verbosity</label>
-                                            <select id="optVerbosity">
-                                                <option value="0" selected>0 (Default)</option>
-                                                <option value="1">1 (Verbose)</option>
-                                                <option value="2">2 (Very Verbose)</option>
-                                            </select>
-                                        </div>
-                                        <div class="form-group half">
-                                            <label for="optProbeVariations">Probe Variations</label>
-                                            <input type="text" id="optProbeVariations" placeholder="~, .bak, .old">
-                                        </div>
+                                    <div class="form-group">
+                                        <label for="optProbeVariations">Probe Variations</label>
+                                        <input type="text" id="optProbeVariations" placeholder="~, .bak, .old">
                                     </div>
 
                                     <div class="form-group">
@@ -290,7 +265,7 @@
                                         <input type="text" id="optIgnoreCodes" placeholder="404,502" value="404">
                                     </div>
                                     <div class="form-group">
-                                        <label for="optDelay">Add MS Request Delay</label>
+                                        <label for="optDelay">Add Request Delay (ms)</label>
                                         <input type="number" id="optDelay" min="0" placeholder="50" value="50">
                                     </div>
                                     <div class="form-group">
