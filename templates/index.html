@@ -7,14 +7,12 @@
     <title>Deepbuster</title>
     <!-- Favicon -->
     <link rel="shortcut icon" href="{{ url_for('static', filename='img/logo.png') }}" type="image/png">
-    <!-- Premium Google Fonts -->
-    <link
-        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Space+Grotesk:wght@400;700&display=swap"
-        rel="stylesheet">
+    <!-- Local Fonts stylesheet -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/fonts.css') }}">
     <!-- Main Style Sheet -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-    <!-- Vis-Network for beautiful Canvas Hierarchical Tree Graphs -->
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- Vis-Network for beautiful Canvas Hierarchical Tree Graphs (Local) -->
+    <script src="{{ url_for('static', filename='js/vis-network.min.js') }}"></script>
 </head>
 
 <body>
