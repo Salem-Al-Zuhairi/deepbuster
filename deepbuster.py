@@ -516,6 +516,8 @@ class Deepbuster:
             
             http_client = self.http_client
             headers = dict(self.headers) if self.headers else {}
+            if 'Connection' not in headers:
+                headers['Connection'] = 'close'
             if self.cookie:
                 headers['Cookie'] = self.cookie
 
@@ -538,8 +540,30 @@ class Deepbuster:
                               proxy_password=self.proxy_password,
                               connect_timeout=10.0,
                               request_timeout=10.0)
-            self.total_requests += 1
-            response = await http_client.fetch(req)
+            
+            # Retry loop for 599 timeouts or network dropouts
+            max_retries = 2
+            attempt = 0
+            response = None
+            while attempt <= max_retries:
+                try:
+                    if attempt > 0:
+                        await asyncio.sleep(0.1 * attempt)
+                    self.total_requests += 1
+                    response = await http_client.fetch(req)
+                    break
+                except HTTPClientError as e:
+                    if e.code == 599 and attempt < max_retries:
+                        attempt += 1
+                        self.total_requests -= 1
+                        continue
+                    raise e
+                except Exception as e:
+                    if attempt < max_retries:
+                        attempt += 1
+                        self.total_requests -= 1
+                        continue
+                    raise e
             self.track_response_code(response.code)
             if response.code in self.ignored_codes:
                 return
