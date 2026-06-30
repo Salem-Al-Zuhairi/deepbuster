@@ -19,11 +19,15 @@ class DeepbusterAIEngine:
         self.logger.addHandler(file_handler)
         
         self.enabled = False
+        self.unchecked_candidates_set = set()
         self.api_endpoint = ""
         self.api_key = ""
         self.model_name = ""
         self.temperature = 0.3
         self.max_tokens = 4096
+        self.max_content_length = 8000
+        self.trigger_status_codes = [200, 201, 301, 302, 403]
+        self.min_body_size = 0
         self.prefixes = [""]
         self.suffixes = [""]
         self.patterns = ["{keyword}"]
@@ -89,10 +93,8 @@ class DeepbusterAIEngine:
                     "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
                     "api_key": "YOUR_API_KEY_HERE",
                     "model": "gemini-2.5-flash",
-                    "vision_model": None,
                     "temperature": 0.3,
                     "max_tokens": 4096,
-                    "reasoning_effort": "none",
                     "custom_system_prompt": self.system_prompt
                 },
                 "rate_limits": {
@@ -109,9 +111,7 @@ class DeepbusterAIEngine:
                 "analysis": {
                     "max_content_length": 8000,
                     "trigger_status_codes": [200, 201, 301, 302, 403],
-                    "min_body_size": 0,
-                    "analyze_images": False,
-                    "max_images_per_page": 3
+                    "min_body_size": 0
                 },
                 "wordlist": {
                     "output_file": self.wordlist_path,
@@ -134,25 +134,6 @@ class DeepbusterAIEngine:
                         "dev_{keyword}",
                         "backup_{keyword}"
                     ]
-                },
-                "recon": {
-                    "enabled": True,
-                    "sources": {
-                        "wayback_machine": True
-                    },
-                    "max_paths": 500,
-                    "timeout": 15
-                },
-                "communication": {
-                    "shared_dir": "/tmp/deepbuster",
-                    "discoveries_file": "discoveries.jsonl",
-                    "wordlist_file": "ai_generated_wordlist.txt",
-                    "poll_interval": 2.0
-                },
-                "logging": {
-                    "level": "INFO",
-                    "file": None,
-                    "show_token_usage": True
                 }
             }
             try:
@@ -214,6 +195,11 @@ class DeepbusterAIEngine:
             self.suffixes = wordlist_config.get("suffixes", [""])
             self.patterns = wordlist_config.get("patterns", ["{keyword}"])
             
+            analysis_config = data.get("analysis", {})
+            self.max_content_length = analysis_config.get("max_content_length", 8000)
+            self.trigger_status_codes = analysis_config.get("trigger_status_codes", [200, 201, 301, 302, 403])
+            self.min_body_size = analysis_config.get("min_body_size", 0)
+            
             if self.enabled:
                 self.logger.info("AI Engine successfully initialized and enabled.")
             else:
@@ -226,6 +212,7 @@ class DeepbusterAIEngine:
     def load_state_unchecked_words(self):
         """Reads ai_generated_wordlist.txt and extracts words starting with [$]."""
         unchecked_words = []
+        self.unchecked_candidates_set.clear()
         if not os.path.exists(self.wordlist_path):
             return unchecked_words
             
@@ -237,14 +224,31 @@ class DeepbusterAIEngine:
                         word = line[3:].strip()
                         if word:
                             unchecked_words.append(word)
+                            self.unchecked_candidates_set.add(word)
             self.logger.info(f"Loaded {len(unchecked_words)} unchecked AI paths from existing wordlist.")
         except Exception as e:
             self.logger.error(f"Error loading state from wordlist: {e}")
             
         return unchecked_words
 
-    def mark_word_processed(self, word):
+    def mark_word_processed(self, path):
         """Removes the [$] prefix from a processed word in the file."""
+        # path is like 'admin/v1/login.php' or 'v1/login.php'
+        match = None
+        if path in self.unchecked_candidates_set:
+            match = path
+        else:
+            # Suffix match: e.g. if path is 'admin/v1/login.php' and candidate is 'v1/login.php'
+            for candidate in self.unchecked_candidates_set:
+                if path.endswith(candidate) and (len(path) == len(candidate) or path[-len(candidate)-1] == '/'):
+                    match = candidate
+                    break
+        
+        if not match:
+            return
+            
+        self.unchecked_candidates_set.discard(match)
+        
         if not os.path.exists(self.wordlist_path):
             return
             
@@ -256,8 +260,8 @@ class DeepbusterAIEngine:
             updated = False
             for i, line in enumerate(lines):
                 stripped = line.strip()
-                if stripped == f"[$] {word}" or stripped == f"[$]{word}":
-                    lines[i] = f"{word}\n"
+                if stripped == f"[$] {match}" or stripped == f"[$]{match}":
+                    lines[i] = f"{match}\n"
                     updated = True
                     break
                     
@@ -303,10 +307,13 @@ class DeepbusterAIEngine:
                 for candidate in expanded_words:
                     if candidate not in existing_words:
                         f.write(f"[$] {candidate}\n")
+                        self.unchecked_candidates_set.add(candidate)
                         appended_count += 1
             self.logger.info(f"Appended {appended_count} expanded new words to {self.wordlist_path}")
         except Exception as e:
             self.logger.error(f"Failed to save new words to wordlist file: {e}")
+            
+        return list(expanded_words)
 
     def _clean_rate_limit_records(self):
         import time
@@ -391,7 +398,13 @@ class DeepbusterAIEngine:
         
         self.logger.info(f"Starting AI analysis of path: {path}")
         
-        # Clean response body for token economy
+        # Check size limits
+        body_len = len(response_body) if response_body else 0
+        if body_len < self.min_body_size:
+            self.logger.info(f"Skipping AI analysis for path {path}: body size {body_len} is less than min_body_size {self.min_body_size}")
+            return []
+
+        # Clean response body for token economy and truncate to max_content_length
         body_text = ""
         if response_body:
             if isinstance(response_body, bytes):
@@ -401,6 +414,11 @@ class DeepbusterAIEngine:
                     body_text = str(response_body)
             else:
                 body_text = str(response_body)
+                
+            # Truncate if exceeds max_content_length
+            if len(body_text) > self.max_content_length:
+                self.logger.info(f"Truncating response body from {len(body_text)} to max_content_length {self.max_content_length}")
+                body_text = body_text[:self.max_content_length] + "\n[TRUNCATED BY AI ENGINE LIMITS]"
                 
         headers_str = json.dumps(dict(response_headers)) if response_headers else "None"
         
@@ -548,8 +566,8 @@ class DeepbusterAIEngine:
                 # Sanitize extracted words
                 clean_words = [str(w).strip().strip("/") for w in words if w]
                 self.logger.info(f"AI returned {len(clean_words)} candidate words for path {path}: {clean_words}")
-                self._save_new_words(clean_words)
-                return clean_words
+                expanded = self._save_new_words(clean_words)
+                return expanded
             else:
                 self.logger.warning(f"AI response content did not parse as a list: {content}")
                 

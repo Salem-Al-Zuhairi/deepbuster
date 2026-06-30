@@ -16,7 +16,11 @@ from deepbuster import (
     parse_ignore_codes,
     parse_extensions,
     parse_variations,
-    save_output
+    save_output,
+    take_screenshot,
+    check_target_active,
+    download_remote_wordlist,
+    ensure_playwright_installed
 )
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -58,81 +62,6 @@ class ActiveScan:
             self.ai_words_list = []
 
 active_scan = ActiveScan()
-
-# Optional Playwright screenshot taker helper
-# Optional Playwright screenshot taker helper
-def take_screenshot(url, output_path_base):
-    png_path = output_path_base + ".png"
-    svg_path = output_path_base + ".svg"
-    try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
-            page = browser.new_page()
-            page.set_viewport_size({"width": 1280, "height": 720})
-            # Set timeout to 12 seconds to avoid hanging, wait until network is idle
-            try:
-                page.goto(url, timeout=12000, wait_until="networkidle")
-            except Exception as goto_err:
-                print(f"[*] Playwright load timeout for {url}: {goto_err}. Taking screenshot of current state...")
-            time.sleep(0.5)
-            page.screenshot(path=png_path)
-            browser.close()
-            return "png"
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"[!] Playwright screenshot failed for {url}: {e}")
-        # Build SVG fallback preview image
-        try:
-            import urllib.request
-            title = url.replace("http://", "").replace("https://", "")
-            req = urllib.request.Request(
-                url, 
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Deepbuster/2.5.0'}
-            )
-            code = 200
-            try:
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    code = response.getcode()
-            except Exception as http_err:
-                if hasattr(http_err, 'code'):
-                    code = http_err.code
-                else:
-                    code = "ERR"
-            
-            # Simple SVG card with URL and status info
-            svg_content = f"""<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
-  <rect width="100%" height="100%" fill="#1a1c23" stroke="#ff0055" stroke-width="2"/>
-  <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2a1b40"/>
-      <stop offset="100%" stop-color="#0d0e15"/>
-    </linearGradient>
-  </defs>
-  <rect width="596" height="396" x="2" y="2" fill="url(#g)" rx="10"/>
-  <text x="50" y="80" fill="#ff0055" font-family="monospace" font-size="28" font-weight="bold">DEEPBUSTER WEB PREVIEW</text>
-  <line x1="50" y1="105" x2="550" y2="105" stroke="#ff0055" stroke-width="2" opacity="0.5"/>
-  
-  <text x="50" y="160" fill="#ffffff" font-family="sans-serif" font-size="16" opacity="0.7">TARGET PATH:</text>
-  <text x="50" y="190" fill="#00ffcc" font-family="monospace" font-size="18" font-weight="bold">{title}</text>
-  
-  <text x="50" y="250" fill="#ffffff" font-family="sans-serif" font-size="16" opacity="0.7">RESPONSE STATUS:</text>
-  <rect x="50" y="270" width="100" height="35" fill="#223344" rx="5" stroke="#00ffcc" stroke-width="1"/>
-  <text x="100" y="293" fill="#00ffcc" font-family="monospace" font-size="18" font-weight="bold" text-anchor="middle">HTTP {code}</text>
-  
-  <text x="50" y="350" fill="#ff0055" font-family="monospace" font-size="12" opacity="0.8">// Live Playwright driver is unavailable on this server.</text>
-</svg>"""
-            # Save as SVG card
-            with open(svg_path, "w") as f:
-                f.write(svg_content)
-            return "svg"
-        except Exception as build_err:
-            print(f"[!] Fallback screenshot builder failed: {build_err}")
-            return None
 
 # Scanner execution runner in worker thread
 def run_scanner_loop(target_url, wordlist, kwargs, scan_id):
@@ -220,12 +149,6 @@ def run_scanner_loop(target_url, wordlist, kwargs, scan_id):
         active_scan.loop.run_until_complete(active_scan.scanner.run(wordlist))
         active_scan.status = "completed"
         database.update_scan_status(scan_id, "completed", datetime.now().isoformat())
-        
-        # Write output file if requested
-        output_file = kwargs.get('output_file')
-        if output_file:
-            is_csv = output_file.lower().endswith('.csv')
-            save_output(output_file, active_scan.scanner.results, is_csv=is_csv, base_url=target_url)
     except asyncio.CancelledError:
         active_scan.status = "stopped"
         database.update_scan_status(scan_id, "stopped", datetime.now().isoformat())
@@ -233,61 +156,12 @@ def run_scanner_loop(target_url, wordlist, kwargs, scan_id):
         active_scan.status = "error"
         database.update_scan_status(scan_id, f"error: {str(e)}", datetime.now().isoformat())
     finally:
+        # Write output file if requested (even if stopped or error, to save partial progress!)
+        output_file = kwargs.get('output_file')
+        if output_file and active_scan.scanner:
+            is_csv = output_file.lower().endswith('.csv')
+            save_output(output_file, active_scan.scanner.results, is_csv=is_csv, base_url=target_url)
         active_scan.loop.close()
-
-def check_target_active(target_url, proxy=None):
-    import urllib.request
-    import urllib.parse
-    import urllib.error
-    import ssl
-
-    # Clean target URL: ensure scheme exists
-    parsed = urllib.parse.urlparse(target_url)
-    if not parsed.scheme or parsed.scheme not in ("http", "https"):
-        return False, "Invalid URL scheme. Target must start with http:// or https://"
-
-    try:
-        # Build opener with optional proxy
-        handlers = []
-        if proxy:
-            proxy_host, proxy_port = proxy
-            if proxy_host and proxy_port:
-                proxy_url = f"http://{proxy_host}:{proxy_port}"
-                proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
-                handlers.append(proxy_handler)
-        
-        # Don't fail on self-signed certificates
-        context = ssl._create_unverified_context()
-        https_handler = urllib.request.HTTPSHandler(context=context)
-        handlers.append(https_handler)
-        
-        opener = urllib.request.build_opener(*handlers)
-        
-        # Try HEAD request first for efficiency
-        req = urllib.request.Request(
-            target_url,
-            method="HEAD",
-            headers={'User-Agent': 'Mozilla/5.0 Deepbuster/2.5.0 Probe'}
-        )
-        
-        try:
-            with opener.open(req, timeout=5) as response:
-                return True, None
-        except urllib.error.HTTPError:
-            # Server responded with an HTTP status code, so it is active
-            return True, None
-        except urllib.error.URLError:
-            # Connection failed. Let's try a fallback GET request
-            try:
-                req.method = "GET"
-                with opener.open(req, timeout=5) as response:
-                    return True, None
-            except urllib.error.HTTPError:
-                return True, None
-            except Exception as e:
-                return False, f"Target host is unreachable: {str(e)}"
-    except Exception as e:
-        return False, f"Target check error: {str(e)}"
 
 # Flask API Handlers
 @app.route("/")
@@ -310,22 +184,10 @@ def start_scan():
     # If it is a URL, fetch it and cache it locally
     is_remote_wordlist = wordlist_path.startswith("http://") or wordlist_path.startswith("https://")
     if is_remote_wordlist:
-        import urllib.request
-        try:
-            req = urllib.request.Request(
-                wordlist_path,
-                headers={'User-Agent': 'Mozilla/5.0 Deepbuster/2.5.0'}
-            )
-            with urllib.request.urlopen(req, timeout=10) as response:
-                content = response.read().decode('utf-8', errors='ignore')
-            
-            # Save to a local cached wordlist path
-            cached_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloaded_wordlist.txt")
-            with open(cached_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            wordlist_path = cached_path
-        except Exception as url_err:
-            return jsonify({"error": f"Failed to download wordlist from URL: {str(url_err)}"}), 400
+        cached_path, err = download_remote_wordlist(wordlist_path)
+        if err:
+            return jsonify({"error": err}), 400
+        wordlist_path = cached_path
     else:
         if not os.path.exists(wordlist_path):
             return jsonify({"error": f"Wordlist file not found: {wordlist_path}"}), 400
@@ -773,44 +635,7 @@ def find_free_port(start_port):
             port += 1
     return start_port
 
-def ensure_playwright_installed():
-    try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            browser.close()
-        print("[+] Playwright and Chromium are fully installed and available.")
-    except (ImportError, Exception) as e:
-        print(f"[-] Playwright/Chromium check failed: {e}. Attempting auto-installation...")
-        import subprocess
-        import sys
-        
-        # 1. Install playwright pip package
-        try:
-            print("[*] Installing playwright pip package...")
-            subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "playwright", "--break-system-packages"], check=True)
-        except Exception as install_err:
-            print(f"[!] Pip install failed: {install_err}")
-            
-        # 2. Run playwright install chromium
-        try:
-            print("[*] Running 'playwright install chromium'...")
-            subprocess.run(["playwright", "install", "chromium"], check=True)
-        except Exception as install_err:
-            try:
-                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-            except Exception as install_err2:
-                print(f"[!] 'playwright install chromium' failed: {install_err2}")
-                
-        # 3. Run playwright install-deps chromium (to install Linux system deps)
-        try:
-            print("[*] Running 'playwright install-deps chromium'...")
-            subprocess.run(["playwright", "install-deps", "chromium"], check=True)
-        except Exception as install_err:
-            try:
-                subprocess.run([sys.executable, "-m", "playwright", "install-deps", "chromium"], check=True)
-            except Exception as install_err2:
-                print(f"[!] 'playwright install-deps chromium' failed: {install_err2}")
+
 
 def start_gui_server():
     ensure_playwright_installed()

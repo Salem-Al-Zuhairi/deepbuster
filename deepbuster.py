@@ -644,7 +644,9 @@ class Deepbuster:
                 'headers': [header for header in response.headers.get_all()],
             })
 
-            if self.ai_enabled and response.code in [200, 301, 302]:
+            # Trigger AI analysis if status code matches trigger_status_codes in config.json
+            trigger_codes = self.ai_engine.trigger_status_codes if self.ai_engine else [200, 201, 301, 302, 403]
+            if self.ai_enabled and response.code in trigger_codes:
                 task = asyncio.create_task(self.trigger_ai_analysis(path, response.headers, response.body))
                 self.ai_tasks.add(task)
                 task.add_done_callback(self.ai_tasks.discard)
@@ -682,6 +684,13 @@ class Deepbuster:
                 'response_size': body_len,
                 'headers': [],
             })
+
+            # Trigger AI analysis for errors if status code matches trigger_status_codes in config.json
+            trigger_codes = self.ai_engine.trigger_status_codes if self.ai_engine else [200, 201, 301, 302, 403]
+            if self.ai_enabled and e.code in trigger_codes and e.response:
+                task = asyncio.create_task(self.trigger_ai_analysis(path, e.response.headers, e.response.body))
+                self.ai_tasks.add(task)
+                task.add_done_callback(self.ai_tasks.discard)
         except Exception as e:
             self.track_response_code(0)
             await self.safe_print(f"\u001b[31;1m[!] Request exception for {path}: {e}\u001b[0m")
@@ -695,6 +704,8 @@ class Deepbuster:
                 'headers': [],
             })
         finally:
+            if self.ai_enabled and self.ai_engine and got_path:
+                self.ai_engine.mark_word_processed(path.lstrip('/'))
             if got_path:
                 self.queue.task_done()
 
@@ -795,6 +806,185 @@ def check_target_reachable(url):
         return False, f"Temporary failure in name resolution: Check your internet/network connection or host DNS."
     except Exception as e:
         return False, f"Connection check failed: {e}."
+
+
+def take_screenshot(url, output_path_base):
+    import time
+    png_path = output_path_base + ".png"
+    svg_path = output_path_base + ".svg"
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            page = browser.new_page()
+            page.set_viewport_size({"width": 1280, "height": 720})
+            try:
+                page.goto(url, timeout=12000, wait_until="networkidle")
+            except Exception as goto_err:
+                print(f"[*] Playwright load timeout for {url}: {goto_err}. Taking screenshot of current state...")
+            time.sleep(0.5)
+            page.screenshot(path=png_path)
+            browser.close()
+            return "png"
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"[!] Playwright screenshot failed for {url}: {e}")
+        try:
+            import urllib.request
+            title = url.replace("http://", "").replace("https://", "")
+            req = urllib.request.Request(
+                url, 
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'}
+            )
+            code = 200
+            try:
+                with urllib.request.urlopen(req, timeout=3) as response:
+                    code = response.getcode()
+            except Exception as http_err:
+                if hasattr(http_err, 'code'):
+                    code = http_err.code
+                else:
+                    code = "ERR"
+            
+            svg_content = f"""<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400">
+  <rect width="100%" height="100%" fill="#1a1c23" stroke="#ff0055" stroke-width="2"/>
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2a1b40"/>
+      <stop offset="100%" stop-color="#0d0e15"/>
+    </linearGradient>
+  </defs>
+  <rect width="596" height="396" x="2" y="2" fill="url(#g)" rx="10"/>
+  <text x="50" y="80" fill="#ff0055" font-family="monospace" font-size="28" font-weight="bold">DEEPBUSTER WEB PREVIEW</text>
+  <line x1="50" y1="105" x2="550" y2="105" stroke="#ff0055" stroke-width="2" opacity="0.5"/>
+  
+  <text x="50" y="160" fill="#ffffff" font-family="sans-serif" font-size="16" opacity="0.7">TARGET PATH:</text>
+  <text x="50" y="190" fill="#00ffcc" font-family="monospace" font-size="18" font-weight="bold">{title}</text>
+  
+  <text x="50" y="250" fill="#ffffff" font-family="sans-serif" font-size="16" opacity="0.7">RESPONSE STATUS:</text>
+  <rect x="50" y="270" width="100" height="35" fill="#223344" rx="5" stroke="#00ffcc" stroke-width="1"/>
+  <text x="100" y="293" fill="#00ffcc" font-family="monospace" font-size="18" font-weight="bold" text-anchor="middle">HTTP {code}</text>
+  
+  <text x="50" y="350" fill="#ff0055" font-family="monospace" font-size="12" opacity="0.8">// Live Playwright driver is unavailable on this server.</text>
+</svg>"""
+            with open(svg_path, "w") as f:
+                f.write(svg_content)
+            return "svg"
+        except Exception as build_err:
+            print(f"[!] Fallback screenshot builder failed: {build_err}")
+            return None
+
+
+def check_target_active(target_url, proxy=None):
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+    import ssl
+
+    parsed = urllib.parse.urlparse(target_url)
+    if not parsed.scheme or parsed.scheme not in ("http", "https"):
+        return False, "Invalid URL scheme. Target must start with http:// or https://"
+
+    try:
+        handlers = []
+        if proxy:
+            proxy_host, proxy_port = proxy
+            if proxy_host and proxy_port:
+                proxy_url = f"http://{proxy_host}:{proxy_port}"
+                proxy_handler = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+                handlers.append(proxy_handler)
+        
+        context = ssl._create_unverified_context()
+        https_handler = urllib.request.HTTPSHandler(context=context)
+        handlers.append(https_handler)
+        
+        opener = urllib.request.build_opener(*handlers)
+        
+        req = urllib.request.Request(
+            target_url,
+            method="HEAD",
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0'}
+        )
+        
+        try:
+            with opener.open(req, timeout=5) as response:
+                return True, None
+        except urllib.error.HTTPError:
+            return True, None
+        except urllib.error.URLError:
+            try:
+                req.method = "GET"
+                with opener.open(req, timeout=5) as response:
+                    return True, None
+            except urllib.error.HTTPError:
+                return True, None
+            except Exception as e:
+                return False, f"Target host is unreachable: {str(e)}"
+    except Exception as e:
+        return False, f"Target check error: {str(e)}"
+
+
+def download_remote_wordlist(wordlist_path):
+    import urllib.request
+    import os
+    try:
+        req = urllib.request.Request(
+            wordlist_path,
+            headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15'}
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            content = response.read().decode('utf-8', errors='ignore')
+        
+        cached_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloaded_wordlist.txt")
+        with open(cached_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return cached_path, None
+    except Exception as url_err:
+        return None, f"Failed to download wordlist from URL: {str(url_err)}"
+
+
+def ensure_playwright_installed():
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        print("[+] Playwright and Chromium are fully installed and available.")
+    except (ImportError, Exception) as e:
+        print(f"[-] Playwright/Chromium check failed: {e}. Attempting auto-installation...")
+        import subprocess
+        import sys
+        
+        # 1. Install playwright pip package
+        try:
+            print("[*] Installing playwright pip package...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "playwright", "--break-system-packages"], check=True)
+        except Exception as install_err:
+            print(f"[!] Pip install failed: {install_err}")
+            
+        # 2. Run playwright install chromium
+        try:
+            print("[*] Running 'playwright install chromium'...")
+            subprocess.run(["playwright", "install", "chromium"], check=True)
+        except Exception as install_err:
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+            except Exception as install_err2:
+                print(f"[!] 'playwright install chromium' failed: {install_err2}")
+                
+        # 3. Run playwright install-deps chromium (to install Linux system deps)
+        try:
+            print("[*] Running 'playwright install-deps chromium'...")
+            subprocess.run(["playwright", "install-deps", "chromium"], check=True)
+        except Exception as install_err:
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install-deps", "chromium"], check=True)
+            except Exception as install_err2:
+                print(f"[!] 'playwright install-deps chromium' failed: {install_err2}")
 
 
 async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> None:
