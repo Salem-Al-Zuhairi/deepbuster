@@ -13,6 +13,17 @@ from ai_engine import DeepbusterAIEngine
 import os
 from datetime import datetime
 
+class PrependItem:
+    def __init__(self, value):
+        self.value = value
+
+class DeepbusterQueue(asyncio.Queue):
+    def _put(self, item):
+        if isinstance(item, PrependItem):
+            self._queue.appendleft(item.value)
+        else:
+            self._queue.append(item)
+
 # Ensure config.json is created on startup if it doesn't exist
 try:
     if not os.path.exists("config.json"):
@@ -256,7 +267,7 @@ class Deepbuster:
         credentials = kwargs.get('credentials', None)
         self.auth_user_name, self.auth_password = credentials.split(':', 1) \
             if isinstance(credentials, str) else (None, None)
-        self.queue = asyncio.Queue()
+        self.queue = DeepbusterQueue()
         self.num_workers = kwargs.get('num_workers', 10)
         self.results = []
         
@@ -417,10 +428,26 @@ class Deepbuster:
             for directory in list(self.scanned_directories):
                 # Ensure directory ends with '/' for clean merging
                 base_dir = directory if directory.endswith('/') else f"{directory}/"
-                for word in words:
+                for word in reversed(words):
                     # Clean up prefix slash
                     clean_word = word[1:] if word.startswith('/') else word
-                    await self.queue.put(f"{base_dir}{clean_word}")
+                    full_path = f"{base_dir}{clean_word}"
+                    
+                    # Normalize path just like try_url does to check visited_paths
+                    norm_path = full_path
+                    if not self.use_path_as_is:
+                        if not norm_path.startswith('/'):
+                            norm_path = '/' + norm_path
+                        if not self.dont_force_slash and not norm_path.endswith('/'):
+                            last_segment = norm_path.split('/')[-1]
+                            if '.' not in last_segment:
+                                norm_path = norm_path + '/'
+                    
+                    # Skip if already scanned
+                    if norm_path in self.visited_paths:
+                        continue
+                        
+                    await self.queue.put(PrependItem(full_path))
                     
         self.current_ai_status = "Idle"
 
@@ -752,11 +779,37 @@ class Deepbuster:
         }
 
 
+def check_target_reachable(url):
+    import socket
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host:
+            return False, "Invalid URL structure."
+        
+        # We try resolving the host to verify connection/DNS
+        socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == 'https' else 80))
+        return True, None
+    except socket.gaierror as e:
+        return False, f"Temporary failure in name resolution: Check your internet/network connection or host DNS."
+    except Exception as e:
+        return False, f"Connection check failed: {e}."
+
+
 async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> None:
+    # Clear the terminal before starting the scan
+    os.system('clear' if os.name != 'nt' else 'cls')
 
     # Add protocol scheme if not present
     if not base_url.startswith("http://") and not base_url.startswith("https://"):
         base_url = "http://" + base_url
+
+    # Check target connectivity/reachability
+    reachable, err_msg = check_target_reachable(base_url)
+    if not reachable:
+        print(f"\n\u001b[31;1m[!] Network Error: {err_msg}\u001b[0m\n")
+        sys.exit(1)
 
     # Load all wordlist lines into memory to calculate stats
     wordlists_data = []
@@ -768,13 +821,13 @@ async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> No
         total_words += len(lines)
         wordlist_paths.append(getattr(word_file, 'name', '<stdin>'))
 
-    # Beautiful Ascii art banner in Feroxbuster style
-    print("\u001b[35;1m" + r"""
- ____  _____ _____ ____  ____  _     ____ _____ _____ ____ 
-|  _ \|  ___| ____|  _ \| __ )| |   / ___|_   _| ____|  _ \ 
-| | | | |_  |  _| | |_) |  _ \| |   \___ \ | | |  _| | |_) |
-| |_| |  _| | |___|  __/| |_) | |___ ___) || | | |___|  _ < 
-|____/|_|   |_____|_|   |____/|_____|____/ |_| |_____|_| \_\ """ + "\u001b[0m" + """
+    # Beautiful Ascii art banner in Feroxbuster style (color matching Web GUI identity: neon green/cyan)
+    print("\u001b[38;2;0;255;153;1m" + r"""
+ ____  _____ _____ ____  ____  _   _ ____ _____ _____ ____ 
+|  _ \| ____| ____|  _ \| __ )| | | / ___|_   _| ____|  _ \ 
+| | | |  _| |  _| | |_) |  _ \| | | \___ \ | | |  _| | |_) |
+| |_| | |___| |___|  __/| |_) | |_| |___) || | | |___|  _ < 
+|____/|_____|_____|_|   |____/ \___/|____/ |_| |_____|_| \_\ """ + "\u001b[0m" + """
     \u001b[36mby OverPowerTeam\u001b[0m               \u001b[33;1mver: beta\u001b[0m
 ============================================================
 """)
@@ -824,7 +877,7 @@ async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> No
     
     auto_pause = kwargs.get('auto_pause', True)
     auto_pause_status = "Enabled" if auto_pause else "Disabled"
-    print(f"\u001b[36m⚠️  WAF Auto-Pause :\u001b[0m {auto_pause_status}")
+    print(f"\u001b[36m⚠️  WAF Auto-Pause  :\u001b[0m {auto_pause_status}")
     
     validate_cert = kwargs.get('validate_cert', True)
     ssl_val_status = "Enabled" if validate_cert else "Disabled (Insecure)"
@@ -840,8 +893,8 @@ async def main(base_url: str, word_files: Iterable[io.StringIO], **kwargs) -> No
     deepbuster = Deepbuster(base_url, **kwargs)
 
     if deepbuster.ai_enabled:
-        print("\u001b[35;1m💡 Tip: To monitor the AI Agent's real-time reasoning and thought logs, run:\u001b[0m")
-        print("   \u001b[36mtail -f deepbuster_ai.log\u001b[0m \u001b[35;1min a separate terminal window.\u001b[0m")
+        print("\u001b[38;2;0;255;153;1m💡 Tip: To monitor the AI Agent's real-time reasoning and thought logs, run:\u001b[0m")
+        print("   \u001b[36mtail -f deepbuster_ai.log\u001b[0m \u001b[38;2;0;255;153;1min a separate terminal window.\u001b[0m")
         print("============================================================\n")
     else:
         print("============================================================\n")
@@ -963,7 +1016,12 @@ if __name__ == '__main__':
 
     word_files = [sys.stdin]
     if len(args.word_file) > 0:
-        word_files = [open(filename, 'r') for filename in args.word_file]
+        word_files = [open(filename, 'r', encoding='utf-8', errors='ignore') for filename in args.word_file]
+    else:
+        try:
+            sys.stdin.reconfigure(encoding='utf-8', errors='ignore')
+        except AttributeError:
+            pass
     
     ignored_codes = parse_ignore_codes(args.ignore_code)
 

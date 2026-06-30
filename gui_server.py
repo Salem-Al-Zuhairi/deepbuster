@@ -422,6 +422,12 @@ def start_scan():
     if not target_url.startswith("http://") and not target_url.startswith("https://"):
         target_url = "http://" + target_url
 
+    # Check target connectivity/reachability
+    from deepbuster import check_target_reachable
+    reachable, err_msg = check_target_reachable(target_url)
+    if not reachable:
+        return jsonify({"error": f"Network/DNS Error: {err_msg}"}), 400
+
     # Write scan entry to SQLite
     scan_id = database.create_scan(target_url, wordlist_path, threads)
     
