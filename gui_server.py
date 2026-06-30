@@ -637,9 +637,9 @@ def find_free_port(start_port):
 
 
 
-def start_gui_server():
+def start_gui_server(port=4440):
     ensure_playwright_installed()
-    default_port = 4440
+    default_port = port
     active_port = find_free_port(default_port)
     
     print("\n============================================================")

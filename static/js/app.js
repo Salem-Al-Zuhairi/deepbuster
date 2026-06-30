@@ -7,6 +7,12 @@
 document.addEventListener("DOMContentLoaded", () => {
     window.currentAiWords = [];
 
+    // Set active port dynamically based on location
+    const statPort = document.getElementById("statPort");
+    if (statPort) {
+        statPort.textContent = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+    }
+
     // Navigation Tabs Routing
     const navButtons = document.querySelectorAll(".nav-btn");
     const tabPanels = document.querySelectorAll(".tab-panel");

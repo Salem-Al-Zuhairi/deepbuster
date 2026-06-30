@@ -1194,11 +1194,12 @@ if __name__ == '__main__':
     parser.add_argument('-U', '--rotate-user-agents', action='store_true', help="Rotate User-Agents randomly for each request", default=False)
     parser.add_argument('--no-auto-pause', action='store_true', help="Disable automatic pausing of scan when WAF block (403/429) is suspected", default=False)
     parser.add_argument('-k', '--insecure', action='store_true', help='Allow insecure server connections when using SSL/TLS (Ignore SSL verification)', default=False)
+    parser.add_argument('-p', '--port', type=int, help='Port to run the GUI on (default: 4440)', default=4440)
     args = parser.parse_args()
     
     if args.gui:
         import gui_server
-        gui_server.start_gui_server()
+        gui_server.start_gui_server(port=args.port)
         sys.exit(0)
 
     if not args.base_url:
